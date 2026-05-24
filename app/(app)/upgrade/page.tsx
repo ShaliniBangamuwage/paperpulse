@@ -1,11 +1,11 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { toast } from 'sonner'
 
-export default function UpgradePage() {
+function UpgradePageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const isSuccess = searchParams.get('success') === 'true'
@@ -166,5 +166,17 @@ export default function UpgradePage() {
         )}
       </div>
     </div>
+  )
+}
+
+export default function UpgradePage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen dark:bg-gray-950 bg-white flex items-center justify-center">
+        <div className="animate-spin w-6 h-6 border-2 border-orange-500 border-t-transparent rounded-full" />
+      </div>
+    }>
+      <UpgradePageInner />
+    </Suspense>
   )
 }
