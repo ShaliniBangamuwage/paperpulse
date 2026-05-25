@@ -145,22 +145,34 @@ function UpgradePageInner() {
 
       console.log('Hash generated successfully, starting payment')
 
-      // Setup PayHere callbacks before starting payment
-      ;(window as any).payhere.onCompleted = function (orderId: string) {
-        console.log('Payment completed:', orderId)
-        window.location.href = '/upgrade?success=true'
-      }
+      // Setup PayHere callbacks using stable global references to avoid runtime issues
+      try {
+        const w = window as any
 
-      ;(window as any).payhere.onDismissed = function () {
-        console.log('Payment dismissed by user')
-        toast.info('Payment cancelled')
-        setLoading(false)
-      }
+        w.__payhere_onCompleted = function (orderId: string) {
+          console.log('Payment completed:', orderId)
+          window.location.href = '/upgrade?success=true'
+        }
 
-      ;(window as any).payhere.onError = function (error: any) {
-        console.error('Payment error:', error)
-        toast.error('Payment failed: ' + (error?.message || 'Unknown error'))
-        setLoading(false)
+        w.__payhere_onDismissed = function () {
+          console.log('Payment dismissed by user')
+          toast.info('Payment cancelled')
+          setLoading(false)
+        }
+
+        w.__payhere_onError = function (error: any) {
+          console.error('Payment error:', error)
+          toast.error('Payment failed: ' + (error?.message || 'Unknown error'))
+          setLoading(false)
+        }
+
+        if (w.payhere) {
+          w.payhere.onCompleted = w.__payhere_onCompleted
+          w.payhere.onDismissed = w.__payhere_onDismissed
+          w.payhere.onError = w.__payhere_onError
+        }
+      } catch (cbError) {
+        console.error('Error setting PayHere callbacks:', cbError)
       }
 
       // Debug: show what we will send to PayHere and ensure `payhere` exists
@@ -205,6 +217,30 @@ function UpgradePageInner() {
         onLoad={() => {
           console.log('PayHere script loaded')
           setScriptLoaded(true)
+          try {
+            // Ensure stable global callback references so PayHere can call them
+            const w = window as any
+            if (w.payhere) {
+              w.__payhere_onCompleted = w.__payhere_onCompleted || function (orderId: string) {
+                console.log('Default payhere onCompleted:', orderId)
+              }
+
+              w.__payhere_onDismissed = w.__payhere_onDismissed || function () {
+                console.log('Default payhere onDismissed')
+              }
+
+              w.__payhere_onError = w.__payhere_onError || function (err: any) {
+                console.error('Default payhere onError:', err)
+              }
+
+              // Assign stable globals to the payhere callbacks
+              w.payhere.onCompleted = w.__payhere_onCompleted
+              w.payhere.onDismissed = w.__payhere_onDismissed
+              w.payhere.onError = w.__payhere_onError
+            }
+          } catch (e) {
+            console.error('Error setting default PayHere callbacks', e)
+          }
         }}
         onError={() => {
           console.error('Failed to load PayHere script')
