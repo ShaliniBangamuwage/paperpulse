@@ -65,8 +65,10 @@ export default function ProfilePage() {
       if (!user) return
       const ext = file.name.split('.').pop()
       const fileName = `${user.id}/avatar.${ext}`
-      const { error: uploadError } = await supabase.storage.from('avatars').upload(fileName, file, { upsert: true })
-      if (uploadError) throw uploadError
+      await supabase.storage.from('avatars').remove([fileName])
+      const { error: uploadError } = await supabase.storage
+        .from('avatars').upload(fileName, file, { cacheControl: '0' })
+      if (uploadError) { toast.error(uploadError.message); setUploadingAvatar(false); return }
       const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(fileName)
       const avatarUrl = `${publicUrl}?t=${Date.now()}`
       await supabase.from('profiles').update({ avatar_url: avatarUrl }).eq('id', user.id)

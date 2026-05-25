@@ -1,10 +1,9 @@
 'use client'
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import Link from 'next/link'
-import { Mail, Lock, Eye, EyeOff, Zap, FileText, Lightbulb, ArrowRight } from 'lucide-react'
+import { Mail, Lock, Eye, EyeOff, FileText, Lightbulb, ArrowRight, Zap } from 'lucide-react'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -12,24 +11,30 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
-  const router = useRouter()
   const supabase = createClient()
 
   async function handleLogin() {
     if (!email || !password) { toast.error('Please fill in all fields'); return }
     setLoading(true)
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) {
-      toast.error(error.message)
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+      if (error) {
+        toast.error(error.message)
+        setLoading(false)
+        return
+      }
+      const { data: profile } = await supabase
+        .from('profiles').select('role').eq('id', data.user?.id).single()
+      toast.success('Welcome back!')
+      if (profile?.role === 'admin') {
+        window.location.href = '/admin'
+      } else {
+        window.location.href = '/dashboard'
+      }
+    } catch {
+      toast.error('Something went wrong')
       setLoading(false)
-      return
     }
-    const { data: profile } = await supabase
-      .from('profiles').select('role').eq('id', data.user?.id).single()
-    toast.success('Welcome back!')
-    if (profile?.role === 'admin') router.push('/admin')
-    else router.push('/dashboard')
-    setLoading(false)
   }
 
   async function handleGoogle() {
@@ -44,14 +49,10 @@ export default function LoginPage() {
     }
   }
 
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Enter') handleLogin()
-  }
-
   return (
     <div className="min-h-screen bg-gray-950 flex">
 
-      {/* Left panel — branding */}
+      {/* Left panel */}
       <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-orange-600 via-orange-500 to-amber-400 flex-col justify-between p-12">
         <div>
           <div className="flex items-center gap-2 mb-16">
@@ -61,19 +62,19 @@ export default function LoginPage() {
             <span className="text-white font-bold text-xl">PaperPulse</span>
           </div>
           <h1 className="text-4xl font-bold text-white mb-4 leading-tight">
-            Turn research papers into<br />
+            Turn research papers into
+            <br />
             <span className="text-orange-100">buildable project ideas</span>
           </h1>
           <p className="text-orange-100 text-lg leading-relaxed">
-            Upload any academic PDF and get 3 concrete, student-ready project ideas in seconds — powered by AI.
+            Upload any academic PDF and get 3 concrete, student-ready project ideas in seconds, powered by AI.
           </p>
         </div>
-
         <div className="space-y-4">
           {[
             { icon: <FileText size={16} />, text: 'Upload any research paper PDF' },
             { icon: <Lightbulb size={16} />, text: 'AI generates 3 buildable project ideas' },
-            { icon: <Zap size={16} />, text: 'Get tech stack, roadmap & architecture' },
+            { icon: <Zap size={16} />, text: 'Get tech stack, roadmap and architecture' },
           ].map(item => (
             <div key={item.text} className="flex items-center gap-3">
               <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center text-white shrink-0">
@@ -82,15 +83,14 @@ export default function LoginPage() {
               <p className="text-orange-100 text-sm">{item.text}</p>
             </div>
           ))}
-          <p className="text-orange-200 text-xs pt-2">Free for students · No credit card needed</p>
+          <p className="text-orange-200 text-xs pt-2">Free for students. No credit card needed</p>
         </div>
       </div>
 
-      {/* Right panel — form */}
+      {/* Right panel */}
       <div className="flex-1 flex items-center justify-center p-6">
         <div className="w-full max-w-md">
 
-          {/* Mobile logo */}
           <div className="flex items-center gap-2 mb-8 lg:hidden">
             <div className="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center">
               <FileText size={18} className="text-white" />
@@ -103,7 +103,6 @@ export default function LoginPage() {
             <p className="text-gray-400 text-sm">Sign in to continue to PaperPulse</p>
           </div>
 
-          {/* Google sign in */}
           <button
             onClick={handleGoogle}
             disabled={googleLoading}
@@ -121,14 +120,12 @@ export default function LoginPage() {
             {googleLoading ? 'Connecting...' : 'Continue with Google'}
           </button>
 
-          {/* Divider */}
           <div className="flex items-center gap-4 mb-6">
             <div className="flex-1 h-px bg-gray-800" />
             <span className="text-gray-500 text-xs">or sign in with email</span>
             <div className="flex-1 h-px bg-gray-800" />
           </div>
 
-          {/* Email & password */}
           <div className="space-y-4 mb-6">
             <div>
               <label className="text-gray-300 text-sm font-medium mb-1.5 block">Email</label>
@@ -137,7 +134,7 @@ export default function LoginPage() {
                 <input
                   type="email" value={email}
                   onChange={e => setEmail(e.target.value)}
-                  onKeyDown={handleKeyDown}
+                  onKeyDown={e => e.key === 'Enter' && handleLogin()}
                   placeholder="you@example.com"
                   className="w-full bg-gray-900 border border-gray-700 text-white rounded-xl pl-10 pr-4 py-3 text-sm focus:outline-none focus:border-orange-500 transition-colors placeholder:text-gray-600" />
               </div>
@@ -154,7 +151,7 @@ export default function LoginPage() {
                 <input
                   type={showPassword ? 'text' : 'password'} value={password}
                   onChange={e => setPassword(e.target.value)}
-                  onKeyDown={handleKeyDown}
+                  onKeyDown={e => e.key === 'Enter' && handleLogin()}
                   placeholder="••••••••"
                   className="w-full bg-gray-900 border border-gray-700 text-white rounded-xl pl-10 pr-12 py-3 text-sm focus:outline-none focus:border-orange-500 transition-colors placeholder:text-gray-600" />
                 <button onClick={() => setShowPassword(!showPassword)}
@@ -165,7 +162,6 @@ export default function LoginPage() {
             </div>
           </div>
 
-          {/* Sign in button */}
           <button
             onClick={handleLogin}
             disabled={loading}
@@ -188,11 +184,9 @@ export default function LoginPage() {
             By signing in you agree to our Terms of Service and Privacy Policy
           </p>
 
-          {/* Admin portal link */}
           <div className="mt-8 pt-6 border-t border-gray-800 text-center">
-            <Link href="/admin/login"
-              className="text-gray-600 hover:text-gray-400 text-xs transition-colors">
-              Admin portal →
+            <Link href="/admin/login" className="text-gray-600 hover:text-gray-400 text-xs transition-colors">
+              Admin portal
             </Link>
           </div>
 
