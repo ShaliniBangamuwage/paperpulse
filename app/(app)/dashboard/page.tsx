@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Paper } from '@/types'
 import { toast } from 'sonner'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Search, FileText, Zap, Ban } from 'lucide-react'
 
@@ -16,28 +16,42 @@ export default function DashboardPage() {
   const [search, setSearch] = useState('')
   const supabase = createClient()
   const router = useRouter()
+  const searchParams = useSearchParams()
 
-  const fetchPapers = useCallback(async () => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+ const fetchPapers = useCallback(async () => {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return
 
-    const { data } = await supabase
-      .from('papers')
-      .select('*')
-      .order('created_at', { ascending: false })
+  // ✅ Explicitly filter by user_id — don't rely on RLS alone
+  const { data } = await supabase
+    .from('papers')
+    .select('*')
+    .eq('user_id', user.id)          // <-- ADD THIS LINE
+    .order('created_at', { ascending: false })
 
-    const { data: prof } = await supabase
-      .from('profiles')
-      .select('role, is_pro, papers_count')
-      .eq('id', user.id)
-      .single()
+  const { data: prof } = await supabase
+    .from('profiles')
+    .select('role, is_pro, papers_count')
+    .eq('id', user.id)
+    .single()
 
-    setPapers(data || [])
-    setUserProfile(prof)
-    setLoading(false)
-  }, [supabase])
+  setPapers(data || [])
+  setUserProfile(prof)
+  setLoading(false)
+}, [supabase])
+  useEffect(() => {
+    const isOAuth = searchParams.get('oauth') === 'true'
 
-  useEffect(() => { fetchPapers() }, [fetchPapers])
+    if (isOAuth) {
+      // After Google OAuth, force session refresh before fetching
+      supabase.auth.refreshSession().then(() => {
+        window.history.replaceState({}, '', '/dashboard')
+        fetchPapers()
+      })
+    } else {
+      fetchPapers()
+    }
+  }, [fetchPapers, searchParams])
 
   async function extractText(file: File): Promise<string> {
     const pdfjsLib = await import('pdfjs-dist')

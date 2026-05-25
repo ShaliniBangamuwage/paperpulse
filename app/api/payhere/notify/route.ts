@@ -11,27 +11,23 @@ export async function POST(request: NextRequest) {
 
     console.log('PayHere notify received:', { orderId, statusCode, email })
 
-    // status_code 2 = success in PayHere
     if (statusCode !== '2') {
-      console.log('Payment not successful, status:', statusCode)
       return NextResponse.json({ received: true })
     }
 
-    // Extract user_id from order_id (format: PP-{userId}-{timestamp})
-    const parts = orderId.split('-')
-    // Remove first element 'PP' and last element (timestamp)
-    const userId = parts.slice(1, parts.length - 1).join('-')
-
-    if (!userId) {
+    // ✅ orderId format: PP-{uuid}-{timestamp}
+    // UUID is 36 chars: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    const match = orderId.match(/^PP-([0-9a-f-]{36})-\d+$/i)
+    if (!match) {
       console.error('Could not extract userId from orderId:', orderId)
       return NextResponse.json({ error: 'Invalid order' }, { status: 400 })
     }
 
+    const userId = match[1]
     console.log('Activating Pro for userId:', userId)
 
     const supabase = createAdminClient()
 
-    // Update user to Pro
     const { error: profileError } = await supabase
       .from('profiles')
       .update({ is_pro: true, pro_since: new Date().toISOString() })
@@ -39,7 +35,6 @@ export async function POST(request: NextRequest) {
 
     if (profileError) console.error('Profile update error:', profileError)
 
-    // Check if payment already recorded
     const { data: existing } = await supabase
       .from('payments')
       .select('id')
@@ -58,6 +53,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({ success: true })
+
   } catch (error: any) {
     console.error('PayHere notify error:', error)
     return NextResponse.json({ error: error.message }, { status: 500 })

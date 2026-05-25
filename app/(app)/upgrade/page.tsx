@@ -107,32 +107,22 @@ async function handleUpgrade() {
     setLoading(true)
 
     const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { toast.error('Please login first'); return }
 
-    if (!user) {
-      toast.error('Please login first')
-      return
-    }
-
-    const orderId = `PP-${Date.now()}`
+    const orderId = `PP-${user.id}-${Date.now()}`  // ✅ userId embedded
     const amount = '9.00'
     const currency = 'USD'
 
     const res = await fetch('/api/payhere/hash', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        order_id: orderId,
-        amount,
-        currency
-      })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order_id: orderId, amount, currency })
     })
 
     const data = await res.json()
 
     const payment = {
-      sandbox: true,
+      sandbox: process.env.NEXT_PUBLIC_PAYHERE_SANDBOX === 'true', // ✅ env controlled
       merchant_id: data.merchant_id,
       return_url: `${window.location.origin}/upgrade?success=true`,
       cancel_url: `${window.location.origin}/upgrade`,
@@ -153,7 +143,9 @@ async function handleUpgrade() {
 
     const form = document.createElement('form')
     form.method = 'POST'
-    form.action = 'https://sandbox.payhere.lk/pay/checkout'
+    form.action = payment.sandbox
+      ? 'https://sandbox.payhere.lk/pay/checkout'
+      : 'https://www.payhere.lk/pay/checkout'  // ✅ correct prod URL
 
     Object.entries(payment).forEach(([key, value]) => {
       const input = document.createElement('input')

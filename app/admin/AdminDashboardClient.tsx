@@ -119,6 +119,8 @@ function InviteAdminButton() {
   )
 }
 
+
+
 export default function AdminDashboardClient({
   currentUser, stats, papers, users, recentIdeas,
   payments, announcements: initialAnnouncements,
@@ -326,7 +328,7 @@ export default function AdminDashboardClient({
         <div className="p-8">
 
           {/* ── OVERVIEW ── */}
-          {tab === 'overview' && (
+          {tab === 'overview' && ( <>
             <div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
                 {[
@@ -388,7 +390,10 @@ export default function AdminDashboardClient({
                 </div>
               </div>
             </div>
-          )}
+            <div className="mt-6">
+              <PaymentsAnalysis payments={payments} />
+            </div>
+          </> )}
 
           {/* ── USERS ── */}
           {tab === 'users' && (
@@ -770,6 +775,50 @@ export default function AdminDashboardClient({
             </div>
           )}
 
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Simple Payments analysis component (minimal, local-only analysis)
+function PaymentsAnalysis({ payments }: { payments: any[] }) {
+  const total = payments.reduce((s: number, p: any) => s + (p.amount || 0), 0)
+  const count = payments.length
+  const avg = count ? total / count : 0
+
+  // monthly breakdown (YYYY-MM)
+  const byMonth: Record<string, number> = {}
+  payments.forEach(p => {
+    try {
+      const m = new Date(p.created_at).toISOString().slice(0,7)
+      byMonth[m] = (byMonth[m] || 0) + (p.amount || 0)
+    } catch {}
+  })
+
+  const months = Object.keys(byMonth).sort()
+  const latestMonth = months[months.length-1] || null
+  const latestRevenue = latestMonth ? byMonth[latestMonth] : 0
+
+  return (
+    <div className="dark:bg-gray-900 bg-orange-50 border dark:border-gray-800 border-orange-100 rounded-2xl p-5">
+      <h3 className="font-medium dark:text-white text-gray-900 mb-3">Payments Analysis</h3>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <p className="text-xs dark:text-gray-400 text-gray-500">Total Revenue</p>
+          <p className="text-2xl font-bold text-green-500">${total.toFixed(2)}</p>
+        </div>
+        <div>
+          <p className="text-xs dark:text-gray-400 text-gray-500">Payments</p>
+          <p className="text-2xl font-bold text-gray-900">{count}</p>
+        </div>
+        <div>
+          <p className="text-xs dark:text-gray-400 text-gray-500">Average Payment</p>
+          <p className="text-2xl font-bold text-gray-900">${avg.toFixed(2)}</p>
+        </div>
+        <div>
+          <p className="text-xs dark:text-gray-400 text-gray-500">Latest Month ({latestMonth || '—'})</p>
+          <p className="text-2xl font-bold text-green-400">${latestRevenue.toFixed(2)}</p>
         </div>
       </div>
     </div>
