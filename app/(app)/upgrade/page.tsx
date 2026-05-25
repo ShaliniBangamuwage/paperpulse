@@ -48,7 +48,6 @@ function UpgradePageInner() {
   }, [isSuccess, supabase])
 
   async function handleUpgrade() {
-    // Check if PayHere script is loaded
     if (!scriptLoaded || !(window as any).payhere) {
       toast.error('Payment system is loading. Please try again in a moment.')
       console.error('PayHere not loaded:', { scriptLoaded, payhere: (window as any).payhere })
@@ -59,7 +58,6 @@ function UpgradePageInner() {
 
     try {
       const { data: { user } } = await supabase.auth.getUser()
-
       if (!user) {
         toast.error('Please login first')
         setLoading(false)
@@ -69,7 +67,6 @@ function UpgradePageInner() {
       const orderId = `PP-${Date.now()}`
       let hashData: any = null
 
-      // Payment object for PayHere - only include fields needed for hash
       const payment = {
         sandbox: true,
         merchant_id: process.env.NEXT_PUBLIC_PAYHERE_MERCHANT_ID!,
@@ -89,18 +86,15 @@ function UpgradePageInner() {
         country: 'Sri Lanka',
       }
 
-      // Generate hash from server with timeout
       console.log('Requesting hash for order:', orderId)
-      
+
       try {
         const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
+        const timeoutId = setTimeout(() => controller.abort(), 10000)
 
         const hashRes = await fetch('/api/payhere/hash', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             merchant_id: payment.merchant_id,
             order_id: payment.order_id,
@@ -129,39 +123,34 @@ function UpgradePageInner() {
           return
         }
 
-        console.log('Hash generated successfully')
+        console.log('Hash generated successfully', hashData)
       } catch (hashError: any) {
         console.error('Hash API error:', hashError)
-        
         if (hashError.name === 'AbortError') {
           toast.error('Hash generation timeout (10s). Check your internet connection.')
         } else {
           toast.error('Hash generation error: ' + (hashError?.message || 'Network error'))
         }
-        
         setLoading(false)
         return
       }
 
-      console.log('Hash generated successfully, starting payment')
-
-      // Setup PayHere callbacks using stable global references to avoid runtime issues
       try {
         const w = window as any
 
         w.__payhere_onCompleted = function (orderId: string) {
-          console.log('Payment completed:', orderId)
+          console.log('PayHere onCompleted callback:', orderId)
           window.location.href = '/upgrade?success=true'
         }
 
         w.__payhere_onDismissed = function () {
-          console.log('Payment dismissed by user')
+          console.log('PayHere onDismissed callback')
           toast.info('Payment cancelled')
           setLoading(false)
         }
 
         w.__payhere_onError = function (error: any) {
-          console.error('Payment error:', error)
+          console.error('PayHere onError callback:', error)
           toast.error('Payment failed: ' + (error?.message || 'Unknown error'))
           setLoading(false)
         }
@@ -175,12 +164,7 @@ function UpgradePageInner() {
         console.error('Error setting PayHere callbacks:', cbError)
       }
 
-      // Debug: show what we will send to PayHere and ensure `payhere` exists
-      console.log('Starting PayHere payment', {
-        payhere: (window as any).payhere,
-        payment,
-        hash: hashData?.hash,
-      })
+      console.log('Starting PayHere payment', { payhere: (window as any).payhere, payment, hash: hashData?.hash })
 
       try {
         const result = (window as any).payhere.startPayment({
@@ -190,7 +174,6 @@ function UpgradePageInner() {
 
         console.log('payhere.startPayment result:', result)
 
-        // Some browsers or CSPs may prevent popups — startPayment returns false in that case
         if (result === false) {
           console.error('PayHere popup failed to open (startPayment returned false)')
           toast.error('Payment popup blocked. Please allow popups and try again.')
@@ -198,10 +181,9 @@ function UpgradePageInner() {
         }
       } catch (startError) {
         console.error('payhere.startPayment threw an error:', startError)
-        toast.error('Failed to start payment: ' + (startError as any)?.message || 'Unknown error')
+        toast.error('Failed to start payment: ' + ((startError as any)?.message || 'Unknown error'))
         setLoading(false)
       }
-
     } catch (error) {
       console.error('Upgrade error:', error)
       toast.error('Something went wrong. Please try again.')
