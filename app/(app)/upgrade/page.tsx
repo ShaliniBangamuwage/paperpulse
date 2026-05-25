@@ -1,9 +1,16 @@
 'use client'
+
 import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { toast } from 'sonner'
+
+declare global {
+  interface Window {
+    payhere: any
+  }
+}
 
 type PayHerePayment = {
   sandbox: boolean
@@ -25,155 +32,215 @@ type PayHerePayment = {
   country: string
 }
 
-type PayHereClient = {
-  onCompleted?: (orderId: string) => void
-  onDismissed?: () => void
-  onError?: (error: unknown) => void
-  startPayment: (payment: PayHerePayment) => boolean
-}
-
-declare global {
-  interface Window {
-    payhere?: PayHereClient
-    __payhere_onCompleted?: (orderId: string) => void
-    __payhere_onDismissed?: () => void
-    __payhere_onError?: (error: unknown) => void
-  }
-}
-
 function UpgradePageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
+
   const isSuccess = searchParams.get('success') === 'true'
 
   const [isPro, setIsPro] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [signedInWithGoogle, setSignedInWithGoogle] = useState(false)
 
   const supabase = createClient()
 
   useEffect(() => {
-    async function checkAndActivate() {
-      const {
-        data: { user }
-      } = await supabase.auth.getUser()
+    async function checkUser() {
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser()
 
-      if (!user) return
+        if (!user) return
 
-      const identities = (user as any)?.identities
-
-      setSignedInWithGoogle(
-        Array.isArray(identities) &&
-        identities.some((i: any) => i.provider === 'google')
-      )
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('is_pro')
-        .eq('id', user.id)
-        .single()
-
-      if (isSuccess && !profile?.is_pro) {
-        await supabase
+        const { data: profile } = await supabase
           .from('profiles')
-          .update({
-            is_pro: true,
-            pro_since: new Date().toISOString()
-          })
+          .select('is_pro')
           .eq('id', user.id)
+          .single()
 
-        await supabase
-          .from('payments')
-          .insert({
-            user_id: user.id,
-            email: user.email || '',
-            plan: 'pro',
-            amount: 9.0,
-            status: 'active'
-          })
+        if (isSuccess && !profile?.is_pro) {
+          await supabase
+            .from('profiles')
+            .update({
+              is_pro: true,
+              pro_since: new Date().toISOString(),
+            })
+            .eq('id', user.id)
 
-        setIsPro(true)
+          // avoid duplicate payments
+          const { data: existing } = await supabase
+            .from('payments')
+            .select('id')
+            .eq('user_id', user.id)
+            .limit(1)
 
-        toast.success('🎉 Pro activated successfully!')
-      } else {
-        setIsPro(profile?.is_pro || false)
+          if (!existing || existing.length === 0) {
+            await supabase.from('payments').insert({
+              user_id: user.id,
+              email: user.email || '',
+              plan: 'pro',
+              amount: 9.0,
+              status: 'active',
+            })
+          }
+
+          setIsPro(true)
+
+          toast.success('🎉 Pro activated successfully!')
+        } else {
+          setIsPro(profile?.is_pro || false)
+        }
+      } catch (error) {
+        console.error(error)
       }
     }
 
-    checkAndActivate()
+    checkUser()
   }, [isSuccess, supabase])
-async function handleUpgrade() {
-  try {
-    setLoading(true)
 
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { toast.error('Please login first'); return }
+  async function handleUpgrade() {
+    try {
+      setLoading(true)
 
-    const orderId = `PP-${user.id}-${Date.now()}`  // ✅ userId embedded
-    const amount = '9.00'
-    const currency = 'USD'
+      const merchantId =
+        process.env.NEXT_PUBLIC_PAYHERE_MERCHANT_ID
 
-    const res = await fetch('/api/payhere/hash', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ order_id: orderId, amount, currency })
-    })
+      if (!merchantId) {
+        toast.error('Missing merchant configuration')
+        return
+      }
 
-    const data = await res.json()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
 
-    const payment = {
-      sandbox: process.env.NEXT_PUBLIC_PAYHERE_SANDBOX === 'true', // ✅ env controlled
-      merchant_id: data.merchant_id,
-      return_url: `${window.location.origin}/upgrade?success=true`,
-      cancel_url: `${window.location.origin}/upgrade`,
-      notify_url: `${window.location.origin}/api/payhere/notify`,
-      order_id: orderId,
-      items: 'PaperPulse Pro',
-      amount,
-      currency,
-      hash: data.hash,
-      first_name: user.email?.split('@')[0] || 'User',
-      last_name: '',
-      email: user.email || '',
-      phone: '0771234567',
-      address: 'Colombo',
-      city: 'Colombo',
-      country: 'Sri Lanka'
+      if (!user) {
+        toast.error('Please login first')
+        return
+      }
+
+      // IMPORTANT:
+      // include user id for notify route
+      const orderId = `PP-${user.id}-${Date.now()}`
+
+      // GET HASH
+      const hashRes = await fetch('/api/payhere/hash', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          order_id: orderId,
+          amount: '9.00',
+          currency: 'USD',
+        }),
+      })
+
+      const hashData = await hashRes.json()
+
+      if (!hashRes.ok || !hashData.hash) {
+        console.error(hashData)
+
+        toast.error('Failed to generate payment hash')
+        return
+      }
+
+      const appUrl =
+        process.env.NEXT_PUBLIC_APP_URL ||
+        window.location.origin
+
+      const payment: PayHerePayment = {
+        sandbox: true,
+
+        merchant_id: merchantId,
+
+        return_url: `${appUrl}/upgrade?success=true`,
+        cancel_url: `${appUrl}/upgrade`,
+        notify_url: `${appUrl}/api/payhere/notify`,
+
+        order_id: orderId,
+
+        items: 'PaperPulse Pro',
+
+        amount: '9.00',
+        currency: 'USD',
+
+        hash: hashData.hash,
+
+        first_name:
+          user.email?.split('@')[0] || 'PaperPulse',
+
+        last_name: 'User',
+
+        email: user.email || '',
+
+        phone: '0771234567',
+
+        address: 'Colombo',
+
+        city: 'Colombo',
+
+        country: 'Sri Lanka',
+      }
+
+      // SDK CHECK
+      if (
+        typeof window === 'undefined' ||
+        !window.payhere
+      ) {
+        console.error('PayHere SDK missing')
+
+        toast.error('PayHere SDK not loaded')
+
+        return
+      }
+
+      // EVENTS
+      window.payhere.onCompleted = function (
+        completedOrderId: string
+      ) {
+        console.log(
+          'Payment completed. OrderID:',
+          completedOrderId
+        )
+
+        toast.success('Payment successful!')
+
+        window.location.href =
+          '/upgrade?success=true'
+      }
+
+      window.payhere.onDismissed = function () {
+        console.log('Payment dismissed')
+
+        toast.error('Payment dismissed')
+      }
+
+      window.payhere.onError = function (error: any) {
+        console.error('PayHere error:', error)
+
+        toast.error('Payment failed')
+      }
+
+      // START PAYMENT
+      window.payhere.startPayment(payment)
+    } catch (error) {
+      console.error('Upgrade error:', error)
+
+      toast.error('Something went wrong')
+    } finally {
+      setLoading(false)
     }
-
-    const form = document.createElement('form')
-    form.method = 'POST'
-    form.action = payment.sandbox
-      ? 'https://sandbox.payhere.lk/pay/checkout'
-      : 'https://www.payhere.lk/pay/checkout'  // ✅ correct prod URL
-
-    Object.entries(payment).forEach(([key, value]) => {
-      const input = document.createElement('input')
-      input.type = 'hidden'
-      input.name = key
-      input.value = String(value)
-      form.appendChild(input)
-    })
-
-    document.body.appendChild(form)
-    form.submit()
-
-  } catch (error) {
-    console.error(error)
-    toast.error('Payment failed')
-  } finally {
-    setLoading(false)
   }
-}
 
   return (
-    <div className="min-h-screen dark:bg-gray-950 bg-white text-gray-900 dark:text-white">
+    <div className="min-h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-white">
       <div className="max-w-4xl mx-auto px-8 py-16">
 
         <div className="flex items-center justify-between mb-12">
           <button
             onClick={() => router.back()}
-            className="dark:text-gray-400 text-gray-500 hover:text-orange-500 text-sm transition-colors"
+            className="text-sm text-gray-500 dark:text-gray-400 hover:text-orange-500 transition-colors"
           >
             ← Back
           </button>
@@ -189,7 +256,7 @@ async function handleUpgrade() {
               You're on Pro!
             </h1>
 
-            <p className="dark:text-gray-400 text-gray-500 mb-8">
+            <p className="text-gray-500 dark:text-gray-400 mb-8">
               Enjoy unlimited papers and ideas.
             </p>
 
@@ -211,16 +278,17 @@ async function handleUpgrade() {
                 Unlock full access
               </h1>
 
-              <p className="dark:text-gray-400 text-gray-500 text-lg">
+              <p className="text-lg text-gray-500 dark:text-gray-400">
                 Keep generating ideas without limits
               </p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl mx-auto">
 
-              {/* Free plan */}
-              <div className="dark:bg-gray-900 bg-gray-50 border dark:border-gray-800 border-gray-200 rounded-2xl p-6">
-                <p className="text-sm dark:text-gray-400 text-gray-500 mb-1">
+              {/* FREE */}
+              <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl p-6">
+
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
                   Current plan
                 </p>
 
@@ -230,7 +298,7 @@ async function handleUpgrade() {
 
                 <p className="text-3xl font-bold mb-6">
                   $0
-                  <span className="text-base font-normal dark:text-gray-400 text-gray-500">
+                  <span className="text-base font-normal text-gray-500 dark:text-gray-400">
                     /mo
                   </span>
                 </p>
@@ -240,25 +308,29 @@ async function handleUpgrade() {
                     '5 papers total',
                     '15 ideas total',
                     'Basic library access',
-                    'Save ideas'
-                  ].map(f => (
+                    'Save ideas',
+                  ].map((feature) => (
                     <li
-                      key={f}
-                      className="flex items-center gap-2 text-sm dark:text-gray-600 text-gray-600"
+                      key={feature}
+                      className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-500"
                     >
-                      <span className="text-orange-400">✓</span>
-                      {f}
+                      <span className="text-orange-400">
+                        ✓
+                      </span>
+
+                      {feature}
                     </li>
                   ))}
                 </ul>
 
-                <div className="w-full bg-gray-200 dark:bg-gray-800 text-center py-2.5 rounded-xl text-sm dark:text-gray-500 text-gray-400 font-medium">
+                <div className="w-full bg-gray-200 dark:bg-gray-800 text-center py-2.5 rounded-xl text-sm text-gray-400 dark:text-gray-500 font-medium">
                   Current plan
                 </div>
               </div>
 
-              {/* Pro plan */}
+              {/* PRO */}
               <div className="bg-orange-500 rounded-2xl p-6 relative overflow-hidden">
+
                 <div className="absolute top-4 right-4 bg-white/20 text-white text-xs px-3 py-1 rounded-full font-medium">
                   Popular
                 </div>
@@ -285,14 +357,13 @@ async function handleUpgrade() {
                     'Priority processing',
                     'Share to library',
                     'Pro badge on profile',
-                    'Early access to features'
-                  ].map(f => (
+                    'Early access to features',
+                  ].map((feature) => (
                     <li
-                      key={f}
+                      key={feature}
                       className="flex items-center gap-2 text-sm text-white"
                     >
-                      <span>✓</span>
-                      {f}
+                      ✓ {feature}
                     </li>
                   ))}
                 </ul>
@@ -300,16 +371,11 @@ async function handleUpgrade() {
                 <button
                   onClick={handleUpgrade}
                   disabled={loading}
-                  className="w-full bg-white text-orange-500 font-semibold py-3 rounded-xl hover:bg-orange-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="w-full bg-white text-orange-500 font-semibold py-3 rounded-xl hover:bg-orange-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  {loading ? (
-                    <>
-                      <span className="w-4 h-4 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
-                      Processing...
-                    </>
-                  ) : (
-                    'Get Pro →'
-                  )}
+                  {loading
+                    ? 'Processing...'
+                    : 'Get Pro →'}
                 </button>
               </div>
             </div>
@@ -320,7 +386,7 @@ async function handleUpgrade() {
               </p>
             )}
 
-            <p className="text-center dark:text-gray-600 text-gray-400 text-xs mt-8">
+            <p className="text-center text-xs text-gray-400 dark:text-gray-600 mt-8">
               Sandbox payment testing enabled
             </p>
           </>
@@ -334,7 +400,7 @@ export default function UpgradePage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen dark:bg-gray-950 bg-white flex items-center justify-center">
+        <div className="min-h-screen bg-white dark:bg-gray-950 flex items-center justify-center">
           <div className="animate-spin w-6 h-6 border-2 border-orange-500 border-t-transparent rounded-full" />
         </div>
       }
