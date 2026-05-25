@@ -45,18 +45,27 @@ function UpgradePageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const isSuccess = searchParams.get('success') === 'true'
+
   const [isPro, setIsPro] = useState(false)
   const [loading, setLoading] = useState(false)
   const [signedInWithGoogle, setSignedInWithGoogle] = useState(false)
+
   const supabase = createClient()
 
   useEffect(() => {
     async function checkAndActivate() {
-      const { data: { user } } = await supabase.auth.getUser()
+      const {
+        data: { user }
+      } = await supabase.auth.getUser()
+
       if (!user) return
 
       const identities = (user as any)?.identities
-      setSignedInWithGoogle(Array.isArray(identities) && identities.some((i: any) => i.provider === 'google'))
+
+      setSignedInWithGoogle(
+        Array.isArray(identities) &&
+        identities.some((i: any) => i.provider === 'google')
+      )
 
       const { data: profile } = await supabase
         .from('profiles')
@@ -65,24 +74,26 @@ function UpgradePageInner() {
         .single()
 
       if (isSuccess && !profile?.is_pro) {
-        // Update profile to Pro
         await supabase
           .from('profiles')
-          .update({ is_pro: true, pro_since: new Date().toISOString() })
+          .update({
+            is_pro: true,
+            pro_since: new Date().toISOString()
+          })
           .eq('id', user.id)
 
-        // Insert payment record so admin can see it
         await supabase
           .from('payments')
           .insert({
             user_id: user.id,
             email: user.email || '',
             plan: 'pro',
-            amount: 9.00,
-            status: 'active',
+            amount: 9.0,
+            status: 'active'
           })
 
         setIsPro(true)
+
         toast.success('🎉 Pro activated successfully!')
       } else {
         setIsPro(profile?.is_pro || false)
@@ -92,70 +103,110 @@ function UpgradePageInner() {
     checkAndActivate()
   }, [isSuccess, supabase])
 
- async function handleUpgrade() {
-  try {
-    const merchantId = (process.env.NEXT_PUBLIC_PAYHERE_MERCHANT_ID || '').trim()
-    if (!merchantId) { toast.error('Payment configuration is missing'); return }
+  async function handleUpgrade() {
+    try {
+      const merchantId = (
+        process.env.NEXT_PUBLIC_PAYHERE_MERCHANT_ID || ''
+      ).trim()
 
-    setLoading(true)
+      if (!merchantId) {
+        toast.error('Payment configuration is missing')
+        return
+      }
 
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { toast.error('Please login first'); setLoading(false); return }
+      setLoading(true)
 
-    const orderId = `PP-${user.id}-${Date.now()}`
-    const amount = '9.00'
-    const currency = 'USD'
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || window.location.origin
+      const {
+        data: { user }
+      } = await supabase.auth.getUser()
 
-    // Generate hash from server
-    const res = await fetch('/api/payhere/hash', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ merchant_id: merchantId, order_id: orderId, amount, currency })
-    })
-    const { hash, error } = await res.json()
-    if (error || !hash) { toast.error('Failed to generate payment hash'); setLoading(false); return }
+      if (!user) {
+        toast.error('Please login first')
+        setLoading(false)
+        return
+      }
 
-    // Build and submit form to PayHere
-    const form = document.createElement('form')
-    form.method = 'POST'
-    form.action = 'https://sandbox.payhere.lk/pay/checkout'
+      const orderId = `PP-${user.id}-${Date.now()}`
+      const amount = '9.00'
+      const currency = 'USD'
 
-    const fields: Record<string, string> = {
-      merchant_id: merchantId,
-      return_url: `${appUrl}/upgrade?success=true`,
-      cancel_url: `${appUrl}/upgrade`,
-      notify_url: `${appUrl}/api/payhere/notify`,
-      order_id: orderId,
-      items: 'PaperPulse Pro',
-      currency,
-      amount,
-      first_name: user.email?.split('@')[0] || 'User',
-      last_name: '',
-      email: user.email || '',
-      phone: '0771234567',
-      address: 'Colombo',
-      city: 'Colombo',
-      country: 'Sri Lanka',
-      hash,
+      const appUrl =
+        process.env.NEXT_PUBLIC_APP_URL ||
+        window.location.origin
+
+      const res = await fetch('/api/payhere/hash', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          merchant_id: merchantId,
+          order_id: orderId,
+          amount,
+          currency
+        })
+      })
+
+      const data = await res.json()
+
+      if (data.error || !data.hash) {
+        toast.error('Failed to generate payment hash')
+        setLoading(false)
+        return
+      }
+
+      const form = document.createElement('form')
+
+      form.method = 'POST'
+
+      form.action =
+        'https://sandbox.payhere.lk/pay/checkout'
+
+      const fields: Record<string, string> = {
+        sandbox: 'true',
+        merchant_id: merchantId,
+        return_url: `${appUrl}/upgrade?success=true`,
+        cancel_url: `${appUrl}/upgrade`,
+        notify_url: `${appUrl}/api/payhere/notify`,
+        order_id: orderId,
+        items: 'PaperPulse Pro',
+        currency,
+        amount,
+        first_name:
+          user.email?.split('@')[0] || 'User',
+        last_name: '',
+        email: user.email || '',
+        phone: '0771234567',
+        address: 'Colombo',
+        city: 'Colombo',
+        country: 'Sri Lanka',
+        hash: data.hash
+      }
+
+      Object.entries(fields).forEach(([key, value]) => {
+        const input = document.createElement('input')
+
+        input.type = 'hidden'
+        input.name = key
+        input.value = value
+
+        form.appendChild(input)
+      })
+
+      document.body.appendChild(form)
+
+      form.submit()
+    } catch (error) {
+      console.error('Upgrade error:', error)
+
+      toast.error(
+        'Something went wrong. Please try again.'
+      )
+
+      setLoading(false)
     }
-
-    Object.entries(fields).forEach(([key, value]) => {
-      const input = document.createElement('input')
-      input.type = 'hidden'
-      input.name = key
-      input.value = value
-      form.appendChild(input)
-    })
-
-    document.body.appendChild(form)
-    form.submit()
-  } catch (error) {
-    console.error('Upgrade error:', error)
-    toast.error('Something went wrong. Please try again.')
-    setLoading(false)
   }
-}
+
   return (
     <div className="min-h-screen dark:bg-gray-950 bg-white text-gray-900 dark:text-white">
       <div className="max-w-4xl mx-auto px-8 py-16">
@@ -163,24 +214,30 @@ function UpgradePageInner() {
         <div className="flex items-center justify-between mb-12">
           <button
             onClick={() => router.back()}
-            className="dark:text-gray-400 text-gray-500 hover:text-orange-500 text-sm transition-colors">
+            className="dark:text-gray-400 text-gray-500 hover:text-orange-500 text-sm transition-colors"
+          >
             ← Back
           </button>
+
           <ThemeToggle />
         </div>
 
         {isPro ? (
           <div className="text-center py-16">
             <div className="text-6xl mb-6">⚡</div>
+
             <h1 className="text-3xl font-bold mb-4 text-orange-500">
               You're on Pro!
             </h1>
+
             <p className="dark:text-gray-400 text-gray-500 mb-8">
               Enjoy unlimited papers and ideas.
             </p>
+
             <button
               onClick={() => router.push('/dashboard')}
-              className="bg-orange-500 hover:bg-orange-400 text-white px-8 py-3 rounded-xl font-medium transition-colors">
+              className="bg-orange-500 hover:bg-orange-400 text-white px-8 py-3 rounded-xl font-medium transition-colors"
+            >
               Back to Dashboard →
             </button>
           </div>
@@ -190,9 +247,11 @@ function UpgradePageInner() {
               <span className="bg-orange-500/20 text-orange-500 text-sm px-4 py-2 rounded-full font-medium">
                 Upgrade
               </span>
+
               <h1 className="text-4xl font-bold mt-4 mb-4">
                 Unlock full access
               </h1>
+
               <p className="dark:text-gray-400 text-gray-500 text-lg">
                 Keep generating ideas without limits
               </p>
@@ -202,19 +261,38 @@ function UpgradePageInner() {
 
               {/* Free plan */}
               <div className="dark:bg-gray-900 bg-gray-50 border dark:border-gray-800 border-gray-200 rounded-2xl p-6">
-                <p className="text-sm dark:text-gray-400 text-gray-500 mb-1">Current plan</p>
-                <h2 className="text-2xl font-bold mb-1">Free</h2>
+                <p className="text-sm dark:text-gray-400 text-gray-500 mb-1">
+                  Current plan
+                </p>
+
+                <h2 className="text-2xl font-bold mb-1">
+                  Free
+                </h2>
+
                 <p className="text-3xl font-bold mb-6">
                   $0
-                  <span className="text-base font-normal dark:text-gray-400 text-gray-500">/mo</span>
+                  <span className="text-base font-normal dark:text-gray-400 text-gray-500">
+                    /mo
+                  </span>
                 </p>
+
                 <ul className="space-y-3 mb-6">
-                  {['5 papers total', '15 ideas total', 'Basic library access', 'Save ideas'].map(f => (
-                    <li key={f} className="flex items-center gap-2 text-sm dark:text-gray-600 text-gray-600">
-                      <span className="text-orange-400">✓</span> {f}
+                  {[
+                    '5 papers total',
+                    '15 ideas total',
+                    'Basic library access',
+                    'Save ideas'
+                  ].map(f => (
+                    <li
+                      key={f}
+                      className="flex items-center gap-2 text-sm dark:text-gray-600 text-gray-600"
+                    >
+                      <span className="text-orange-400">✓</span>
+                      {f}
                     </li>
                   ))}
                 </ul>
+
                 <div className="w-full bg-gray-200 dark:bg-gray-800 text-center py-2.5 rounded-xl text-sm dark:text-gray-500 text-gray-400 font-medium">
                   Current plan
                 </div>
@@ -225,12 +303,22 @@ function UpgradePageInner() {
                 <div className="absolute top-4 right-4 bg-white/20 text-white text-xs px-3 py-1 rounded-full font-medium">
                   Popular
                 </div>
-                <p className="text-orange-100 text-sm mb-1">Upgrade to</p>
-                <h2 className="text-2xl font-bold text-white mb-1">Pro</h2>
+
+                <p className="text-orange-100 text-sm mb-1">
+                  Upgrade to
+                </p>
+
+                <h2 className="text-2xl font-bold text-white mb-1">
+                  Pro
+                </h2>
+
                 <p className="text-3xl font-bold text-white mb-6">
                   $9
-                  <span className="text-base font-normal text-orange-100">/mo</span>
+                  <span className="text-base font-normal text-orange-100">
+                    /mo
+                  </span>
                 </p>
+
                 <ul className="space-y-3 mb-6">
                   {[
                     'Unlimited papers',
@@ -238,23 +326,31 @@ function UpgradePageInner() {
                     'Priority processing',
                     'Share to library',
                     'Pro badge on profile',
-                    'Early access to features',
+                    'Early access to features'
                   ].map(f => (
-                    <li key={f} className="flex items-center gap-2 text-sm text-white">
-                      <span>✓</span> {f}
+                    <li
+                      key={f}
+                      className="flex items-center gap-2 text-sm text-white"
+                    >
+                      <span>✓</span>
+                      {f}
                     </li>
                   ))}
                 </ul>
+
                 <button
                   onClick={handleUpgrade}
                   disabled={loading}
-                  className="w-full bg-white text-orange-500 font-semibold py-3 rounded-xl hover:bg-orange-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                  className="w-full bg-white text-orange-500 font-semibold py-3 rounded-xl hover:bg-orange-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
                   {loading ? (
                     <>
                       <span className="w-4 h-4 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
                       Processing...
                     </>
-                  ) : 'Get Pro →'}
+                  ) : (
+                    'Get Pro →'
+                  )}
                 </button>
               </div>
             </div>
@@ -277,11 +373,13 @@ function UpgradePageInner() {
 
 export default function UpgradePage() {
   return (
-    <Suspense fallback={
-      <div className="min-h-screen dark:bg-gray-950 bg-white flex items-center justify-center">
-        <div className="animate-spin w-6 h-6 border-2 border-orange-500 border-t-transparent rounded-full" />
-      </div>
-    }>
+    <Suspense
+      fallback={
+        <div className="min-h-screen dark:bg-gray-950 bg-white flex items-center justify-center">
+          <div className="animate-spin w-6 h-6 border-2 border-orange-500 border-t-transparent rounded-full" />
+        </div>
+      }
+    >
       <UpgradePageInner />
     </Suspense>
   )
