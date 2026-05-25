@@ -102,110 +102,77 @@ function UpgradePageInner() {
 
     checkAndActivate()
   }, [isSuccess, supabase])
+async function handleUpgrade() {
+  try {
+    setLoading(true)
 
-  async function handleUpgrade() {
-    try {
-      const merchantId = (
-        process.env.NEXT_PUBLIC_PAYHERE_MERCHANT_ID || ''
-      ).trim()
+    const { data: { user } } = await supabase.auth.getUser()
 
-      if (!merchantId) {
-        toast.error('Payment configuration is missing')
-        return
-      }
-
-      setLoading(true)
-
-      const {
-        data: { user }
-      } = await supabase.auth.getUser()
-
-      if (!user) {
-        toast.error('Please login first')
-        setLoading(false)
-        return
-      }
-
-      const orderId = `PP-${user.id}-${Date.now()}`
-      const amount = '9.00'
-      const currency = 'USD'
-
-      const appUrl =
-        process.env.NEXT_PUBLIC_APP_URL ||
-        window.location.origin
-
-      const res = await fetch('/api/payhere/hash', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          merchant_id: merchantId,
-          order_id: orderId,
-          amount,
-          currency
-        })
-      })
-
-      const data = await res.json()
-
-      if (data.error || !data.hash) {
-        toast.error('Failed to generate payment hash')
-        setLoading(false)
-        return
-      }
-
-      const form = document.createElement('form')
-
-      form.method = 'POST'
-
-      form.action =
-        'https://sandbox.payhere.lk/pay/checkout'
-
-      const fields: Record<string, string> = {
-        sandbox: 'true',
-        merchant_id: merchantId,
-        return_url: `${appUrl}/upgrade?success=true`,
-        cancel_url: `${appUrl}/upgrade`,
-        notify_url: `${appUrl}/api/payhere/notify`,
-        order_id: orderId,
-        items: 'PaperPulse Pro',
-        currency,
-        amount,
-        first_name:
-          user.email?.split('@')[0] || 'User',
-        last_name: '',
-        email: user.email || '',
-        phone: '0771234567',
-        address: 'Colombo',
-        city: 'Colombo',
-        country: 'Sri Lanka',
-        hash: data.hash
-      }
-
-      Object.entries(fields).forEach(([key, value]) => {
-        const input = document.createElement('input')
-
-        input.type = 'hidden'
-        input.name = key
-        input.value = value
-
-        form.appendChild(input)
-      })
-
-      document.body.appendChild(form)
-
-      form.submit()
-    } catch (error) {
-      console.error('Upgrade error:', error)
-
-      toast.error(
-        'Something went wrong. Please try again.'
-      )
-
-      setLoading(false)
+    if (!user) {
+      toast.error('Please login first')
+      return
     }
+
+    const orderId = `PP-${Date.now()}`
+    const amount = '9.00'
+    const currency = 'USD'
+
+    const res = await fetch('/api/payhere/hash', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        order_id: orderId,
+        amount,
+        currency
+      })
+    })
+
+    const data = await res.json()
+
+    const payment = {
+      sandbox: true,
+      merchant_id: data.merchant_id,
+      return_url: `${window.location.origin}/upgrade?success=true`,
+      cancel_url: `${window.location.origin}/upgrade`,
+      notify_url: `${window.location.origin}/api/payhere/notify`,
+      order_id: orderId,
+      items: 'PaperPulse Pro',
+      amount,
+      currency,
+      hash: data.hash,
+      first_name: user.email?.split('@')[0] || 'User',
+      last_name: '',
+      email: user.email || '',
+      phone: '0771234567',
+      address: 'Colombo',
+      city: 'Colombo',
+      country: 'Sri Lanka'
+    }
+
+    const form = document.createElement('form')
+    form.method = 'POST'
+    form.action = 'https://sandbox.payhere.lk/pay/checkout'
+
+    Object.entries(payment).forEach(([key, value]) => {
+      const input = document.createElement('input')
+      input.type = 'hidden'
+      input.name = key
+      input.value = String(value)
+      form.appendChild(input)
+    })
+
+    document.body.appendChild(form)
+    form.submit()
+
+  } catch (error) {
+    console.error(error)
+    toast.error('Payment failed')
+  } finally {
+    setLoading(false)
   }
+}
 
   return (
     <div className="min-h-screen dark:bg-gray-950 bg-white text-gray-900 dark:text-white">

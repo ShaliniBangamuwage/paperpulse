@@ -51,7 +51,9 @@ export default function PayHereCheckoutClient() {
         // Submit to PayHere
         const form = document.createElement('form')
         form.method = 'POST'
-        form.action = 'https://sandbox.payhere.lk/pay/checkout'
+      form.action = process.env.NEXT_PUBLIC_PAYHERE_SANDBOX === 'true'
+  ? 'https://sandbox.payhere.lk/pay/checkout'
+  : 'https://www.payhere.lk/pay/checkout'
 
         const fields = {
           merchant_id,
