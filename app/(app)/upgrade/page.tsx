@@ -92,59 +92,70 @@ function UpgradePageInner() {
     checkAndActivate()
   }, [isSuccess, supabase])
 
-  async function handleUpgrade() {
-    try {
-      const merchantId = (process.env.NEXT_PUBLIC_PAYHERE_MERCHANT_ID || '').trim()
-      if (!merchantId) {
-        toast.error('Payment configuration is missing')
-        return
-      }
+ async function handleUpgrade() {
+  try {
+    const merchantId = (process.env.NEXT_PUBLIC_PAYHERE_MERCHANT_ID || '').trim()
+    if (!merchantId) { toast.error('Payment configuration is missing'); return }
 
-      setLoading(true)
+    setLoading(true)
 
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        toast.error('Please login first')
-        setLoading(false)
-        return
-      }
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { toast.error('Please login first'); setLoading(false); return }
 
-      const orderId = `PP-${user.id}-${Date.now()}`
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL || window.location.origin
-      const checkoutUrl = new URL('/payhere/checkout', appUrl)
+    const orderId = `PP-${user.id}-${Date.now()}`
+    const amount = '9.00'
+    const currency = 'USD'
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || window.location.origin
 
-      checkoutUrl.searchParams.set('merchant_id', merchantId)
-      checkoutUrl.searchParams.set('order_id', orderId)
-      checkoutUrl.searchParams.set('items', 'PaperPulse Pro')
-      checkoutUrl.searchParams.set('amount', '9.00')
-      checkoutUrl.searchParams.set('currency', 'USD')
-      checkoutUrl.searchParams.set('first_name', user.email?.split('@')[0] || 'PaperPulse')
-      checkoutUrl.searchParams.set('last_name', 'User')
-      checkoutUrl.searchParams.set('email', user.email || '')
-      checkoutUrl.searchParams.set('phone', '0771234567')
-      checkoutUrl.searchParams.set('address', 'Colombo')
-      checkoutUrl.searchParams.set('city', 'Colombo')
-      checkoutUrl.searchParams.set('country', 'Sri Lanka')
-      checkoutUrl.searchParams.set('return_url', `${appUrl}/upgrade?success=true`)
-      checkoutUrl.searchParams.set('cancel_url', `${appUrl}/upgrade`)
-      checkoutUrl.searchParams.set('notify_url', `${appUrl}/api/payhere/notify`)
+    // Generate hash from server
+    const res = await fetch('/api/payhere/hash', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ merchant_id: merchantId, order_id: orderId, amount, currency })
+    })
+    const { hash, error } = await res.json()
+    if (error || !hash) { toast.error('Failed to generate payment hash'); setLoading(false); return }
 
-      const popup = window.open(checkoutUrl.toString(), '_blank', 'width=720,height=820')
-      if (!popup) {
-        toast.error('Payment popup blocked. Please allow popups and try again.')
-        setLoading(false)
-        return
-      }
+    // Build and submit form to PayHere
+    const form = document.createElement('form')
+    form.method = 'POST'
+    form.action = 'https://sandbox.payhere.lk/pay/checkout'
 
-      popup.focus()
-      setLoading(false)
-    } catch (error) {
-      console.error('Upgrade error:', error)
-      toast.error('Something went wrong. Please try again.')
-      setLoading(false)
+    const fields: Record<string, string> = {
+      merchant_id: merchantId,
+      return_url: `${appUrl}/upgrade?success=true`,
+      cancel_url: `${appUrl}/upgrade`,
+      notify_url: `${appUrl}/api/payhere/notify`,
+      order_id: orderId,
+      items: 'PaperPulse Pro',
+      currency,
+      amount,
+      first_name: user.email?.split('@')[0] || 'User',
+      last_name: '',
+      email: user.email || '',
+      phone: '0771234567',
+      address: 'Colombo',
+      city: 'Colombo',
+      country: 'Sri Lanka',
+      hash,
     }
-  }
 
+    Object.entries(fields).forEach(([key, value]) => {
+      const input = document.createElement('input')
+      input.type = 'hidden'
+      input.name = key
+      input.value = value
+      form.appendChild(input)
+    })
+
+    document.body.appendChild(form)
+    form.submit()
+  } catch (error) {
+    console.error('Upgrade error:', error)
+    toast.error('Something went wrong. Please try again.')
+    setLoading(false)
+  }
+}
   return (
     <div className="min-h-screen dark:bg-gray-950 bg-white text-gray-900 dark:text-white">
       <div className="max-w-4xl mx-auto px-8 py-16">
