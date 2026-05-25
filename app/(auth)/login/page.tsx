@@ -69,7 +69,6 @@ export default function LoginPage() {
           </p>
         </div>
 
-        {/* Feature highlights */}
         <div className="space-y-4">
           {[
             { icon: <FileText size={16} />, text: 'Upload any research paper PDF' },
@@ -185,9 +184,18 @@ export default function LoginPage() {
             </Link>
           </p>
 
-          <p className="text-gray-600 text-xs text-center mt-6">
+          <p className="text-gray-600 text-xs text-center mt-4">
             By signing in you agree to our Terms of Service and Privacy Policy
           </p>
+
+          {/* Admin portal link */}
+          <div className="mt-8 pt-6 border-t border-gray-800 text-center">
+            <Link href="/admin/login"
+              className="text-gray-600 hover:text-gray-400 text-xs transition-colors">
+              Admin portal →
+            </Link>
+          </div>
+
         </div>
       </div>
     </div>

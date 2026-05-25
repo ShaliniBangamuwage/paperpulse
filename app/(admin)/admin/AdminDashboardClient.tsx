@@ -54,6 +54,71 @@ const AnnouncementIcon = ({ type }: { type: string }) => {
   return <Info size={14} />
 }
 
+// ── InviteAdminButton — defined OUTSIDE main component ──
+function InviteAdminButton() {
+  const [showModal, setShowModal] = useState(false)
+  const [email, setEmail] = useState('')
+  const [sending, setSending] = useState(false)
+  const supabase = createClient()
+
+  async function sendInvite() {
+    if (!email) { toast.error('Enter an email'); return }
+    setSending(true)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      const res = await fetch('/api/admin-invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, invitedBy: user?.id })
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      toast.success(`Invite sent to ${email}!`)
+      setEmail('')
+      setShowModal(false)
+    } catch (err: any) {
+      toast.error(err.message)
+    }
+    setSending(false)
+  }
+
+  return (
+    <>
+      <button
+        onClick={() => setShowModal(true)}
+        className="flex items-center gap-2 bg-orange-500 hover:bg-orange-400 text-white text-sm px-4 py-2.5 rounded-xl transition-colors mb-6">
+        + Invite Admin
+      </button>
+
+      {showModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="dark:bg-gray-900 bg-white border dark:border-gray-700 border-orange-200 rounded-2xl p-6 w-full max-w-md">
+            <h3 className="font-semibold dark:text-white text-gray-900 mb-2">Invite Admin</h3>
+            <p className="dark:text-gray-400 text-gray-500 text-sm mb-4">
+              They will receive an email with a link to create their admin account.
+            </p>
+            <input
+              type="email" placeholder="admin@example.com" value={email}
+              onChange={e => setEmail(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && sendInvite()}
+              className="w-full dark:bg-gray-800 bg-orange-50 border dark:border-gray-700 border-orange-200 dark:text-white text-gray-900 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-orange-500 mb-4" />
+            <div className="flex gap-3">
+              <button onClick={() => setShowModal(false)}
+                className="flex-1 dark:bg-gray-800 bg-orange-50 dark:text-gray-300 text-gray-600 py-2.5 rounded-xl text-sm">
+                Cancel
+              </button>
+              <button onClick={sendInvite} disabled={sending}
+                className="flex-1 bg-orange-500 hover:bg-orange-400 text-white py-2.5 rounded-xl text-sm font-medium disabled:opacity-50 transition-colors">
+                {sending ? 'Sending...' : 'Send Invite'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
 export default function AdminDashboardClient({
   currentUser, stats, papers, users, recentIdeas,
   payments, announcements: initialAnnouncements,
@@ -74,7 +139,6 @@ export default function AdminDashboardClient({
   const router = useRouter()
   const supabase = createClient()
 
-  // ── Actions ──────────────────────────────────────────
   async function toggleProStatus(userId: string, current: boolean) {
     const { error } = await supabase.from('profiles').update({
       is_pro: !current,
@@ -168,7 +232,6 @@ export default function AdminDashboardClient({
     toast.success('Deleted')
   }
 
-  // ── Filters ───────────────────────────────────────────
   const filteredPapers = useMemo(() => localPapers.filter(p =>
     p.title?.toLowerCase().includes(search.toLowerCase()) ||
     p.profiles?.email?.toLowerCase().includes(search.toLowerCase())
@@ -185,7 +248,6 @@ export default function AdminDashboardClient({
   const totalRevenue = payments.reduce((sum: number, p: any) => sum + (p.amount || 0), 0)
   const publicPapers = useMemo(() => localPapers.filter(p => p.is_public), [localPapers])
 
-  // ── Nav ───────────────────────────────────────────────
   const navItems: { id: Tab; label: string; icon: React.ReactNode; count?: number; alert?: boolean }[] = [
     { id: 'overview', label: 'Overview', icon: <LayoutDashboard size={16} /> },
     { id: 'users', label: 'Users', icon: <Users size={16} />, count: localUsers.length },
@@ -287,7 +349,6 @@ export default function AdminDashboardClient({
                 ))}
               </div>
 
-              {/* Recent activity */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="dark:bg-gray-900 bg-orange-50 border dark:border-gray-800 border-orange-100 rounded-2xl p-5">
                   <h3 className="font-medium dark:text-white text-gray-900 mb-4">Recent Users</h3>
@@ -332,6 +393,8 @@ export default function AdminDashboardClient({
           {/* ── USERS ── */}
           {tab === 'users' && (
             <div>
+              <InviteAdminButton />
+
               <div className="flex items-center gap-4 mb-6">
                 <input type="text" placeholder="Search users..." value={search}
                   onChange={e => setSearch(e.target.value)}
@@ -339,7 +402,6 @@ export default function AdminDashboardClient({
                 <span className="dark:text-gray-500 text-gray-400 text-sm shrink-0">{filteredUsers.length} users</span>
               </div>
 
-              {/* Ban confirm modal */}
               {confirmBan && (
                 <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
                   <div className="dark:bg-gray-900 bg-white border dark:border-gray-700 border-orange-200 rounded-2xl p-6 max-w-sm w-full mx-4">

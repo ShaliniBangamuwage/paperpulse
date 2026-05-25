@@ -21,25 +21,40 @@ export async function middleware(request: NextRequest) {
   )
 
   const { data: { user } } = await supabase.auth.getUser()
+  const pathname = request.nextUrl.pathname
 
-  // Not logged in — redirect to login
-  const protectedRoutes = ['/dashboard', '/paper', '/saved', '/discover',
-    '/library', '/upgrade', '/roadmap', '/chat', '/tracker', '/reading']
-  const isProtected = protectedRoutes.some(r => request.nextUrl.pathname.startsWith(r))
+  // Allow admin login page without auth
+  if (pathname === '/admin/login') {
+    if (user) {
+      // Already logged in — check if admin
+      const { data: profile } = await supabase
+        .from('profiles').select('role').eq('id', user.id).single()
+      if (profile?.role === 'admin') {
+        return NextResponse.redirect(new URL('/admin', request.url))
+      }
+    }
+    return supabaseResponse
+  }
+
+  // Protected user routes
+  const protectedRoutes = [
+    '/dashboard', '/paper', '/saved', '/discover',
+    '/library', '/upgrade', '/roadmap', '/chat',
+    '/tracker', '/reading', '/collections', '/citations',
+    '/profile', '/compare'
+  ]
+  const isProtected = protectedRoutes.some(r => pathname.startsWith(r))
   if (isProtected && !user) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  // Admin routes — check role in DB
-  if (request.nextUrl.pathname.startsWith('/admin')) {
-    if (!user) return NextResponse.redirect(new URL('/login', request.url))
-
+  // Admin routes — check role
+  if (pathname.startsWith('/admin')) {
+    if (!user) {
+      return NextResponse.redirect(new URL('/admin/login', request.url))
+    }
     const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single()
-
+      .from('profiles').select('role').eq('id', user.id).single()
     if (profile?.role !== 'admin') {
       return NextResponse.redirect(new URL('/dashboard', request.url))
     }
@@ -49,5 +64,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|login|signup|$).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|login|signup|forgot-password|auth|admin/accept-invite|$).*)'],
 }
