@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import crypto from 'crypto'
+import { createClient } from '@/lib/supabase/server'
 
 export async function POST(req: Request) {
   try {
@@ -55,7 +56,56 @@ export async function POST(req: Request) {
     }
 
     console.log('PayHere Notify: Payment verified successfully', { orderId, paymentId, amount, currency, status })
-    return NextResponse.json({ success: true })
+
+    // Update user's Pro status and create payment record
+    try {
+      const supabase = await createClient()
+      
+      // Find payment record by order_id (order format: PP-{userId}-{timestamp})
+      const orderParts = orderId.split('-')
+      const userId = orderParts.length > 1 ? orderParts[1] : null
+
+      if (!userId) {
+        console.warn('PayHere Notify: Could not extract user ID from order_id:', orderId)
+        return NextResponse.json({ success: true })
+      }
+
+      // Update user profile to Pro
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ is_pro: true, pro_since: new Date().toISOString() })
+        .eq('id', userId)
+
+      if (updateError) {
+        console.error('PayHere Notify: Failed to update user profile:', updateError)
+        return NextResponse.json({ success: true })
+      }
+
+      // Create payment record for admin tracking
+      const { error: paymentError } = await supabase
+        .from('payments')
+        .insert({
+          user_id: userId,
+          order_id: orderId,
+          payment_id: paymentId,
+          amount: normalizedAmount,
+          currency,
+          status: 'completed',
+          created_at: new Date().toISOString()
+        })
+
+      if (paymentError) {
+        console.error('PayHere Notify: Failed to create payment record:', paymentError)
+        // Don't fail the webhook if payment record creation fails
+        return NextResponse.json({ success: true })
+      }
+
+      console.log('PayHere Notify: User Pro status updated and payment recorded', { userId, orderId, paymentId })
+      return NextResponse.json({ success: true })
+    } catch (error) {
+      console.error('PayHere Notify: Failed to process payment update:', error)
+      return NextResponse.json({ success: true })
+    }
   } catch (error) {
     console.error('PayHere Notify error:', error)
     return NextResponse.json({ success: false, error: 'Server error' }, { status: 500 })
