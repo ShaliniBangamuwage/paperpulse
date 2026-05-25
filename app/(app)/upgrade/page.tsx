@@ -163,11 +163,32 @@ function UpgradePageInner() {
         setLoading(false)
       }
 
-      // Start payment with hash
-      ;(window as any).payhere.startPayment({
-        ...payment,
-        hash: hashData.hash,
+      // Debug: show what we will send to PayHere and ensure `payhere` exists
+      console.log('Starting PayHere payment', {
+        payhere: (window as any).payhere,
+        payment,
+        hash: hashData?.hash,
       })
+
+      try {
+        const result = (window as any).payhere.startPayment({
+          ...payment,
+          hash: hashData.hash,
+        })
+
+        console.log('payhere.startPayment result:', result)
+
+        // Some browsers or CSPs may prevent popups — startPayment returns false in that case
+        if (result === false) {
+          console.error('PayHere popup failed to open (startPayment returned false)')
+          toast.error('Payment popup blocked. Please allow popups and try again.')
+          setLoading(false)
+        }
+      } catch (startError) {
+        console.error('payhere.startPayment threw an error:', startError)
+        toast.error('Failed to start payment: ' + (startError as any)?.message || 'Unknown error')
+        setLoading(false)
+      }
 
     } catch (error) {
       console.error('Upgrade error:', error)
