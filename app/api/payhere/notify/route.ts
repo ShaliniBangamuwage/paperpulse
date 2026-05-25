@@ -8,15 +8,15 @@ export async function POST(req: Request) {
     const merchantId = formData.get('merchant_id') as string
     const orderId = formData.get('order_id') as string
     const paymentId = formData.get('payment_id') as string
-    const amount = formData.get('amount') as string
-    const currency = formData.get('currency') as string
+    const amount = (formData.get('amount') || formData.get('payhere_amount')) as string
+    const currency = (formData.get('currency') || formData.get('payhere_currency')) as string
     const status = formData.get('status') as string
     const hash = formData.get('hash') as string
 
     console.log('PayHere Notify received:', { merchantId, orderId, paymentId, amount, currency, status })
 
-    if (!merchantId || !orderId || !amount || !currency || !status || !hash) {
-      console.error('PayHere Notify: Missing required fields', { merchantId, orderId, amount, currency, status, hash })
+    if (!merchantId || !orderId || !paymentId || !amount || !currency || !status || !hash) {
+      console.error('PayHere Notify: Missing required fields', { merchantId, orderId, paymentId, amount, currency, status, hash })
       return NextResponse.json({ success: false, error: 'Missing required fields' }, { status: 400 })
     }
 
@@ -34,11 +34,17 @@ export async function POST(req: Request) {
 
     const hashedSecret = crypto.createHash('md5').update(merchantSecret).digest('hex').toUpperCase()
     const normalizedAmount = Number(amount).toFixed(2)
-    const hashString = merchantId + orderId + (paymentId || '') + normalizedAmount + currency + hashedSecret
-    const expectedHash = crypto.createHash('md5').update(hashString).digest('hex').toUpperCase()
+    const hashCandidates = [
+      merchantId + orderId + paymentId + normalizedAmount + currency + status + hashedSecret,
+      merchantId + orderId + paymentId + status + normalizedAmount + currency + hashedSecret,
+    ]
 
-    if (hash !== expectedHash) {
-      console.error('PayHere Notify: Hash verification failed', { provided: hash, expected: expectedHash, hashString })
+    const expectedHash = hashCandidates.map(candidate =>
+      crypto.createHash('md5').update(candidate).digest('hex').toUpperCase()
+    )
+
+    if (!expectedHash.includes(hash.toUpperCase())) {
+      console.error('PayHere Notify: Hash verification failed', { provided: hash, expectedHash, merchantId, orderId, paymentId, normalizedAmount, currency, status })
       return NextResponse.json({ success: false, error: 'Invalid hash' }, { status: 400 })
     }
 
@@ -48,7 +54,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true })
     }
 
-    console.log('PayHere Notify: Payment verified successfully', { orderId, paymentId, amount })
+    console.log('PayHere Notify: Payment verified successfully', { orderId, paymentId, amount, currency, status })
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('PayHere Notify error:', error)

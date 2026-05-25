@@ -6,6 +6,42 @@ import { createClient } from '@/lib/supabase/client'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { toast } from 'sonner'
 
+type PayHerePayment = {
+  sandbox: boolean
+  merchant_id: string
+  return_url: string
+  cancel_url: string
+  notify_url: string
+  order_id: string
+  items: string
+  amount: string
+  currency: string
+  hash: string
+  first_name: string
+  last_name: string
+  email: string
+  phone: string
+  address: string
+  city: string
+  country: string
+}
+
+type PayHereClient = {
+  onCompleted?: (orderId: string) => void
+  onDismissed?: () => void
+  onError?: (error: unknown) => void
+  startPayment: (payment: PayHerePayment) => boolean
+}
+
+declare global {
+  interface Window {
+    payhere?: PayHereClient
+    __payhere_onCompleted?: (orderId: string) => void
+    __payhere_onDismissed?: () => void
+    __payhere_onError?: (error: unknown) => void
+  }
+}
+
 function UpgradePageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -47,7 +83,43 @@ function UpgradePageInner() {
     checkAndActivate()
   }, [isSuccess, supabase])
 
+  const setPayHereCallbacks = () => {
+    const w = window as any
+    if (!w.payhere) {
+      console.warn('PayHere object not available when setting callbacks')
+      return
+    }
+
+    w.__payhere_onCompleted = w.__payhere_onCompleted || function (orderId: string) {
+      console.log('PayHere default onCompleted:', orderId)
+      window.location.href = '/upgrade?success=true'
+    }
+
+    w.__payhere_onDismissed = w.__payhere_onDismissed || function () {
+      console.log('PayHere default onDismissed')
+      toast.info('Payment cancelled')
+      setLoading(false)
+    }
+
+    w.__payhere_onError = w.__payhere_onError || function (error: any) {
+      console.error('PayHere default onError:', error)
+      toast.error('Payment failed: ' + ((error && (error as any).message) || 'Unknown error'))
+      setLoading(false)
+    }
+
+    w.payhere.onCompleted = w.__payhere_onCompleted
+    w.payhere.onDismissed = w.__payhere_onDismissed
+    w.payhere.onError = w.__payhere_onError
+  }
+
   async function handleUpgrade() {
+    const merchantId = (process.env.NEXT_PUBLIC_PAYHERE_MERCHANT_ID || '').trim()
+    if (!merchantId) {
+      toast.error('Payment configuration is missing')
+      console.error('Missing NEXT_PUBLIC_PAYHERE_MERCHANT_ID')
+      return
+    }
+
     if (!scriptLoaded || !(window as any).payhere) {
       toast.error('Payment system is loading. Please try again in a moment.')
       console.error('PayHere not loaded:', { scriptLoaded, payhere: (window as any).payhere })
@@ -65,14 +137,15 @@ function UpgradePageInner() {
       }
 
       const orderId = `PP-${Date.now()}`
-      let hashData: any = null
+      let hashData: { hash: string } | null = null
 
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || window.location.origin
       const payment = {
         sandbox: true,
-        merchant_id: process.env.NEXT_PUBLIC_PAYHERE_MERCHANT_ID!,
-        return_url: `${process.env.NEXT_PUBLIC_APP_URL || window.location.origin}/upgrade?success=true`,
-        cancel_url: `${process.env.NEXT_PUBLIC_APP_URL || window.location.origin}/upgrade`,
-        notify_url: `${process.env.NEXT_PUBLIC_APP_URL || window.location.origin}/api/payhere/notify`,
+        merchant_id: merchantId,
+        return_url: `${appUrl}/upgrade?success=true`,
+        cancel_url: `${appUrl}/upgrade`,
+        notify_url: `${appUrl}/api/payhere/notify`,
         order_id: orderId,
         items: 'PaperPulse Pro',
         amount: '9.00',
@@ -116,7 +189,7 @@ function UpgradePageInner() {
 
         hashData = await hashRes.json()
 
-        if (!hashData.hash) {
+        if (!hashData || !hashData.hash) {
           console.error('No hash returned from server:', hashData)
           toast.error('Hash generation failed: No hash in response')
           setLoading(false)
@@ -164,12 +237,14 @@ function UpgradePageInner() {
         console.error('Error setting PayHere callbacks:', cbError)
       }
 
+      setPayHereCallbacks()
       console.log('Starting PayHere payment', { payhere: (window as any).payhere, payment, hash: hashData?.hash })
 
       try {
+        const hash = hashData!.hash
         const result = (window as any).payhere.startPayment({
           ...payment,
-          hash: hashData.hash,
+          hash,
         })
 
         console.log('payhere.startPayment result:', result)
@@ -200,28 +275,9 @@ function UpgradePageInner() {
           console.log('PayHere script loaded')
           setScriptLoaded(true)
           try {
-            // Ensure stable global callback references so PayHere can call them
-            const w = window as any
-            if (w.payhere) {
-              w.__payhere_onCompleted = w.__payhere_onCompleted || function (orderId: string) {
-                console.log('Default payhere onCompleted:', orderId)
-              }
-
-              w.__payhere_onDismissed = w.__payhere_onDismissed || function () {
-                console.log('Default payhere onDismissed')
-              }
-
-              w.__payhere_onError = w.__payhere_onError || function (err: any) {
-                console.error('Default payhere onError:', err)
-              }
-
-              // Assign stable globals to the payhere callbacks
-              w.payhere.onCompleted = w.__payhere_onCompleted
-              w.payhere.onDismissed = w.__payhere_onDismissed
-              w.payhere.onError = w.__payhere_onError
-            }
+            setPayHereCallbacks()
           } catch (e) {
-            console.error('Error setting default PayHere callbacks', e)
+            console.error('Error setting PayHere callbacks after script load', e)
           }
         }}
         onError={() => {
