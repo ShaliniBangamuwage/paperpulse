@@ -128,10 +128,21 @@ function UpgradePageInner() {
 
     setLoading(true)
 
+    const popup = window.open('', '_blank', 'noopener,noreferrer')
+    if (!popup) {
+      toast.error('Payment popup blocked. Please allow popups and try again.')
+      setLoading(false)
+      return
+    }
+
     try {
+      popup.document.write('<html><body style="font-family: sans-serif; text-align: center; padding: 2rem;"><h2>Preparing payment...</h2><p>Please wait while we launch the PayHere checkout.</p></body></html>')
+      popup.document.title = 'PayHere Checkout'
+
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) {
         toast.error('Please login first')
+        popup.close()
         setLoading(false)
         return
       }
@@ -252,11 +263,13 @@ function UpgradePageInner() {
         if (result === false) {
           console.error('PayHere popup failed to open (startPayment returned false)')
           toast.error('Payment popup blocked. Please allow popups and try again.')
+          popup.close()
           setLoading(false)
         }
       } catch (startError) {
         console.error('payhere.startPayment threw an error:', startError)
         toast.error('Failed to start payment: ' + ((startError as any)?.message || 'Unknown error'))
+        popup.close()
         setLoading(false)
       }
     } catch (error) {
