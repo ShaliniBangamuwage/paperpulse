@@ -1,11 +1,11 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { toast } from 'sonner'
 import { Lock, Eye, EyeOff, FileText, Shield, CheckCircle } from 'lucide-react'
 
-export default function AcceptInvitePage() {
+function AcceptInviteInner() {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [name, setName] = useState('')
@@ -48,7 +48,6 @@ export default function AcceptInvitePage() {
 
     setLoading(true)
     try {
-      // Sign up the new admin
       const { data: authData, error: signUpError } = await supabase.auth.signUp({
         email: invite.email,
         password,
@@ -58,10 +57,8 @@ export default function AcceptInvitePage() {
       if (signUpError) throw signUpError
       if (!authData.user) throw new Error('Failed to create account')
 
-      // Wait a moment for the trigger to create the profile
       await new Promise(resolve => setTimeout(resolve, 1000))
 
-      // Update profile to admin role
       const { error: profileError } = await supabase
         .from('profiles')
         .update({ role: 'admin', display_name: name })
@@ -69,7 +66,6 @@ export default function AcceptInvitePage() {
 
       if (profileError) throw profileError
 
-      // Mark invite as used
       await supabase
         .from('admin_invites')
         .update({ used: true })
@@ -77,7 +73,6 @@ export default function AcceptInvitePage() {
 
       setSuccess(true)
       toast.success('Admin account created!')
-
       setTimeout(() => router.push('/admin/login'), 2000)
     } catch (err: any) {
       toast.error(err.message || 'Something went wrong')
@@ -189,5 +184,17 @@ export default function AcceptInvitePage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function AcceptInvitePage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
+        <div className="animate-spin w-6 h-6 border-2 border-orange-500 border-t-transparent rounded-full" />
+      </div>
+    }>
+      <AcceptInviteInner />
+    </Suspense>
   )
 }
