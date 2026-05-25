@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
       currency,
     } = body
 
-    const merchantSecret = process.env.PAYHERE_MERCHANT_SECRET
+    const merchantSecret = process.env.PAYHERE_SECRET
     if (!merchantSecret) {
       return NextResponse.json({ error: 'Merchant secret not configured' }, { status: 500 })
     }
