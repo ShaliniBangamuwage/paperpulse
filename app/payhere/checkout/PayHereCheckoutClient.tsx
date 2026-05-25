@@ -1,224 +1,117 @@
 'use client'
-
 import { useEffect, useState } from 'react'
-import Script from 'next/script'
-import { useSearchParams } from 'next/navigation'
-
-type PayHerePayment = {
-  sandbox: boolean
-  merchant_id: string
-  return_url: string
-  cancel_url: string
-  notify_url: string
-  order_id: string
-  items: string
-  amount: string
-  currency: string
-  hash: string
-  first_name: string
-  last_name: string
-  email: string
-  phone: string
-  address: string
-  city: string
-  country: string
-}
-
-type PayHereClient = {
-  onCompleted?: (orderId: string) => void
-  onDismissed?: () => void
-  onError?: (error: unknown) => void
-  startPayment: (payment: PayHerePayment) => boolean
-}
-
-declare global {
-  interface Window {
-    payhere?: PayHereClient
-  }
-}
+import { useRouter, useSearchParams } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
+import { Loader2 } from 'lucide-react'
 
 export default function PayHereCheckoutClient() {
+  const router = useRouter()
   const searchParams = useSearchParams()
-  const [scriptLoaded, setScriptLoaded] = useState(false)
-  const [origin, setOrigin] = useState('')
-  const [status, setStatus] = useState('Preparing your PayHere checkout...')
   const [error, setError] = useState<string | null>(null)
-  const [started, setStarted] = useState(false)
-
-  const merchantId = searchParams.get('merchant_id') || ''
-  const orderId = searchParams.get('order_id') || ''
-  const items = searchParams.get('items') || 'PaperPulse Pro'
-  const amount = searchParams.get('amount') || '9.00'
-  const currency = searchParams.get('currency') || 'USD'
-  const firstName = searchParams.get('first_name') || 'PaperPulse'
-  const lastName = searchParams.get('last_name') || 'User'
-  const email = searchParams.get('email') || ''
-  const phone = searchParams.get('phone') || '0771234567'
-  const address = searchParams.get('address') || 'Colombo'
-  const city = searchParams.get('city') || 'Colombo'
-  const country = searchParams.get('country') || 'Sri Lanka'
-  const returnUrl = searchParams.get('return_url') || `${origin}/upgrade?success=true`
-  const cancelUrl = searchParams.get('cancel_url') || `${origin}/upgrade`
-  const notifyUrl = searchParams.get('notify_url') || `${origin}/api/payhere/notify`
+  const supabase = createClient()
 
   useEffect(() => {
-    setOrigin(window.location.origin)
-  }, [])
-
-  useEffect(() => {
-    if (!scriptLoaded || started) {
-      return
-    }
-
-    if (!origin) {
-      return
-    }
-
-    if (!merchantId || !orderId) {
-      setError('Missing payment information.')
-      setStatus('Unable to start PayHere checkout.')
-      return
-    }
-
-    async function startCheckout() {
-      setStatus('Requesting payment authorization...')
-
+    async function initPayment() {
       try {
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 10000)
+        const merchant_id = searchParams.get('merchant_id')
+        const order_id = searchParams.get('order_id')
+        const items = searchParams.get('items')
+        const amount = searchParams.get('amount')
+        const currency = searchParams.get('currency')
+        const first_name = searchParams.get('first_name')
+        const last_name = searchParams.get('last_name')
+        const email = searchParams.get('email')
+        const phone = searchParams.get('phone')
+        const address = searchParams.get('address')
+        const city = searchParams.get('city')
+        const country = searchParams.get('country')
+        const return_url = searchParams.get('return_url')
+        const cancel_url = searchParams.get('cancel_url')
+        const notify_url = searchParams.get('notify_url')
 
-        const response = await fetch('/api/payhere/hash', {
+        if (!merchant_id || !order_id || !amount || !currency || !email) {
+          setError('Missing required payment parameters')
+          return
+        }
+
+        // Generate hash from backend
+        const hashResponse = await fetch('/api/payhere/hash', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            merchant_id: merchantId,
-            order_id: orderId,
-            amount,
-            currency,
-          }),
-          signal: controller.signal,
+          body: JSON.stringify({ merchant_id, order_id, amount, currency })
         })
 
-        clearTimeout(timeoutId)
-
-        if (!response.ok) {
-          const payload = await response.json().catch(() => ({}))
-          const message = payload?.error || `Hash request failed (${response.status})`
-          setError(message)
-          setStatus('Payment authorization failed.')
+        if (!hashResponse.ok) {
+          setError('Failed to initialize payment')
           return
         }
 
-        const payload = await response.json()
-        if (!payload?.hash) {
-          setError('Server did not return a valid payment hash.')
-          setStatus('Payment authorization failed.')
-          return
-        }
+        const { hash } = await hashResponse.json()
 
-        if (!window.payhere) {
-          setError('PayHere SDK did not initialize.')
-          setStatus('Unable to start payment.')
-          return
-        }
+        // Submit to PayHere
+        const form = document.createElement('form')
+        form.method = 'POST'
+        form.action = 'https://sandbox.payhere.lk/pay/checkout'
 
-        window.payhere.onCompleted = function () {
-          setStatus('Payment completed. Redirecting...')
-          window.location.href = returnUrl
-        }
-
-        window.payhere.onDismissed = function () {
-          setStatus('Payment cancelled. Close this window or return to the app.')
-        }
-
-        window.payhere.onError = function (error: any) {
-          console.error('PayHere error:', error)
-          setError('Payment failed. Please try again.')
-          setStatus('Payment error occurred.')
-        }
-
-        const success = window.payhere.startPayment({
-          sandbox: true,
-          merchant_id: merchantId,
-          return_url: returnUrl,
-          cancel_url: cancelUrl,
-          notify_url: notifyUrl,
-          order_id: orderId,
-          items,
-          amount,
+        const fields = {
+          merchant_id,
+          return_url: return_url || '',
+          cancel_url: cancel_url || '',
+          notify_url: notify_url || '',
+          order_id,
+          items: items || '',
           currency,
-          hash: payload.hash,
-          first_name: firstName,
-          last_name: lastName,
+          amount,
+          first_name: first_name || '',
+          last_name: last_name || '',
           email,
-          phone,
-          address,
-          city,
-          country,
+          phone: phone || '',
+          address: address || '',
+          city: city || '',
+          country: country || '',
+          hash,
+        }
+
+        Object.entries(fields).forEach(([key, value]) => {
+          const input = document.createElement('input')
+          input.type = 'hidden'
+          input.name = key
+          input.value = value
+          form.appendChild(input)
         })
 
-        if (success === false) {
-          setError('Payment popup blocked. Please allow popups and try again.')
-          setStatus('Popup blocked.')
-          return
-        }
-
-        setStarted(true)
-        setStatus('Opening PayHere checkout...')
-      } catch (caughtError: any) {
-        if (caughtError?.name === 'AbortError') {
-          setError('Authorization timed out. Please try again.')
-          setStatus('Payment authorization timed out.')
-        } else {
-          setError(caughtError?.message || 'Network error')
-          setStatus('Unable to start payment.')
-        }
+        document.body.appendChild(form)
+        form.submit()
+      } catch (err) {
+        console.error('Payment initialization error:', err)
+        setError('Failed to initialize payment')
       }
     }
 
-    startCheckout()
-  }, [scriptLoaded, started, origin, merchantId, orderId, amount, currency, returnUrl, cancelUrl, notifyUrl, firstName, lastName, email, phone, address, city, country])
+    initPayment()
+  }, [searchParams])
 
-  return (
-    <>
-      <Script
-        src="https://www.payhere.lk/lib/payhere.js"
-        strategy="afterInteractive"
-        onLoad={() => setScriptLoaded(true)}
-        onError={() => {
-          setError('Failed to load PayHere SDK. Please refresh the page.')
-          setStatus('Unable to initialize PayHere.')
-        }}
-      />
-
-      <div className="min-h-screen bg-white text-gray-900 dark:bg-gray-950 dark:text-white">
-        <div className="max-w-xl mx-auto px-8 py-20 text-center">
-          <div className="inline-flex items-center justify-center w-12 h-12 mb-6 rounded-full bg-orange-500 text-white">
-            ⚡
-          </div>
-
-          <h1 className="text-3xl font-bold mb-4">PayHere Checkout</h1>
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-8">
-            {status}
-          </p>
-
-          {error ? (
-            <div className="rounded-2xl border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950 p-4 text-left text-sm text-red-700 dark:text-red-200">
-              <p className="font-semibold">Error</p>
-              <p>{error}</p>
-            </div>
-          ) : (
-            <div className="flex items-center justify-center gap-3 text-gray-500 dark:text-gray-400">
-              <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
-              <span>Starting PayHere checkout...</span>
-            </div>
-          )}
-
-          <p className="mt-8 text-xs text-gray-500 dark:text-gray-400">
-            If the PayHere popup does not appear, allow popups for this site or refresh this page.
-          </p>
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-950">
+        <div className="text-center">
+          <p className="text-red-400 mb-4">{error}</p>
+          <button
+            onClick={() => router.push('/upgrade')}
+            className="text-orange-500 hover:underline text-sm">
+            ← Back to upgrade
+          </button>
         </div>
       </div>
-    </>
+    )
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-950">
+      <div className="text-center">
+        <Loader2 className="w-8 h-8 animate-spin text-orange-500 mx-auto mb-4" />
+        <p className="text-gray-400 text-sm">Redirecting to PayHere...</p>
+      </div>
+    </div>
   )
 }
