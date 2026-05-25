@@ -1,7 +1,6 @@
 'use client'
 import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import Script from 'next/script'
 import { createClient } from '@/lib/supabase/client'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { toast } from 'sonner'
@@ -49,7 +48,6 @@ function UpgradePageInner() {
   const [isPro, setIsPro] = useState(false)
   const [loading, setLoading] = useState(false)
   const [signedInWithGoogle, setSignedInWithGoogle] = useState(false)
-  const [scriptLoaded, setScriptLoaded] = useState(false)
   const supabase = createClient()
 
   useEffect(() => {
@@ -83,36 +81,8 @@ function UpgradePageInner() {
     checkAndActivate()
   }, [isSuccess, supabase])
 
-  const setPayHereCallbacks = () => {
-    const w = window as any
-    if (!w.payhere) {
-      console.warn('PayHere object not available when setting callbacks')
-      return
-    }
-
-    w.__payhere_onCompleted = w.__payhere_onCompleted || function (orderId: string) {
-      console.log('PayHere default onCompleted:', orderId)
-      window.location.href = '/upgrade?success=true'
-    }
-
-    w.__payhere_onDismissed = w.__payhere_onDismissed || function () {
-      console.log('PayHere default onDismissed')
-      toast.info('Payment cancelled')
-      setLoading(false)
-    }
-
-    w.__payhere_onError = w.__payhere_onError || function (error: any) {
-      console.error('PayHere default onError:', error)
-      toast.error('Payment failed: ' + ((error && (error as any).message) || 'Unknown error'))
-      setLoading(false)
-    }
-
-    w.payhere.onCompleted = w.__payhere_onCompleted
-    w.payhere.onDismissed = w.__payhere_onDismissed
-    w.payhere.onError = w.__payhere_onError
-  }
-
   async function handleUpgrade() {
+    try {
     const merchantId = (process.env.NEXT_PUBLIC_PAYHERE_MERCHANT_ID || '').trim()
     if (!merchantId) {
       toast.error('Payment configuration is missing')
@@ -120,158 +90,47 @@ function UpgradePageInner() {
       return
     }
 
-    if (!scriptLoaded || !(window as any).payhere) {
-      toast.error('Payment system is loading. Please try again in a moment.')
-      console.error('PayHere not loaded:', { scriptLoaded, payhere: (window as any).payhere })
+    setLoading(true)
+
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      toast.error('Please login first')
+      setLoading(false)
       return
     }
 
-    setLoading(true)
+    const orderId = `PP-${Date.now()}`
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || window.location.origin
+    const checkoutUrl = new URL('/payhere/checkout', appUrl)
 
-    const popup = window.open('', '_blank', 'noopener,noreferrer')
+    checkoutUrl.searchParams.set('merchant_id', merchantId)
+    checkoutUrl.searchParams.set('order_id', orderId)
+    checkoutUrl.searchParams.set('items', 'PaperPulse Pro')
+    checkoutUrl.searchParams.set('amount', '9.00')
+    checkoutUrl.searchParams.set('currency', 'USD')
+    checkoutUrl.searchParams.set('first_name', user.email?.split('@')[0] || 'PaperPulse')
+    checkoutUrl.searchParams.set('last_name', 'User')
+    checkoutUrl.searchParams.set('email', user.email || '')
+    checkoutUrl.searchParams.set('phone', '0771234567')
+    checkoutUrl.searchParams.set('address', 'Colombo')
+    checkoutUrl.searchParams.set('city', 'Colombo')
+    checkoutUrl.searchParams.set('country', 'Sri Lanka')
+    checkoutUrl.searchParams.set('return_url', `${appUrl}/upgrade?success=true`)
+    checkoutUrl.searchParams.set('cancel_url', `${appUrl}/upgrade`)
+    checkoutUrl.searchParams.set('notify_url', `${appUrl}/api/payhere/notify`)
+
+    console.log('Opening PayHere checkout popup', checkoutUrl.toString())
+
+    const popup = window.open(checkoutUrl.toString(), '_blank', 'width=720,height=820')
     if (!popup) {
       toast.error('Payment popup blocked. Please allow popups and try again.')
       setLoading(false)
       return
     }
 
-    try {
-      popup.document.write('<html><body style="font-family: sans-serif; text-align: center; padding: 2rem;"><h2>Preparing payment...</h2><p>Please wait while we launch the PayHere checkout.</p></body></html>')
-      popup.document.title = 'PayHere Checkout'
-
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        toast.error('Please login first')
-        popup.close()
-        setLoading(false)
-        return
-      }
-
-      const orderId = `PP-${Date.now()}`
-      let hashData: { hash: string } | null = null
-
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL || window.location.origin
-      const payment = {
-        sandbox: true,
-        merchant_id: merchantId,
-        return_url: `${appUrl}/upgrade?success=true`,
-        cancel_url: `${appUrl}/upgrade`,
-        notify_url: `${appUrl}/api/payhere/notify`,
-        order_id: orderId,
-        items: 'PaperPulse Pro',
-        amount: '9.00',
-        currency: 'USD',
-        first_name: user.email?.split('@')[0] || 'PaperPulse',
-        last_name: 'User',
-        email: user.email || '',
-        phone: '0771234567',
-        address: 'Colombo',
-        city: 'Colombo',
-        country: 'Sri Lanka',
-      }
-
-      console.log('Requesting hash for order:', orderId)
-
-      try {
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 10000)
-
-        const hashRes = await fetch('/api/payhere/hash', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            merchant_id: payment.merchant_id,
-            order_id: payment.order_id,
-            amount: payment.amount,
-            currency: payment.currency,
-          }),
-          signal: controller.signal,
-        })
-
-        clearTimeout(timeoutId)
-
-        if (!hashRes.ok) {
-          const errorData = await hashRes.json().catch(() => ({}))
-          console.error('Hash generation failed:', { status: hashRes.status, error: errorData })
-          toast.error(`Hash generation failed (${hashRes.status}): ${errorData.error || 'Unknown error'}`)
-          setLoading(false)
-          return
-        }
-
-        hashData = await hashRes.json()
-
-        if (!hashData || !hashData.hash) {
-          console.error('No hash returned from server:', hashData)
-          toast.error('Hash generation failed: No hash in response')
-          setLoading(false)
-          return
-        }
-
-        console.log('Hash generated successfully', hashData)
-      } catch (hashError: any) {
-        console.error('Hash API error:', hashError)
-        if (hashError.name === 'AbortError') {
-          toast.error('Hash generation timeout (10s). Check your internet connection.')
-        } else {
-          toast.error('Hash generation error: ' + (hashError?.message || 'Network error'))
-        }
-        setLoading(false)
-        return
-      }
-
-      try {
-        const w = window as any
-
-        w.__payhere_onCompleted = function (orderId: string) {
-          console.log('PayHere onCompleted callback:', orderId)
-          window.location.href = '/upgrade?success=true'
-        }
-
-        w.__payhere_onDismissed = function () {
-          console.log('PayHere onDismissed callback')
-          toast.info('Payment cancelled')
-          setLoading(false)
-        }
-
-        w.__payhere_onError = function (error: any) {
-          console.error('PayHere onError callback:', error)
-          toast.error('Payment failed: ' + (error?.message || 'Unknown error'))
-          setLoading(false)
-        }
-
-        if (w.payhere) {
-          w.payhere.onCompleted = w.__payhere_onCompleted
-          w.payhere.onDismissed = w.__payhere_onDismissed
-          w.payhere.onError = w.__payhere_onError
-        }
-      } catch (cbError) {
-        console.error('Error setting PayHere callbacks:', cbError)
-      }
-
-      setPayHereCallbacks()
-      console.log('Starting PayHere payment', { payhere: (window as any).payhere, payment, hash: hashData?.hash })
-
-      try {
-        const hash = hashData!.hash
-        const result = (window as any).payhere.startPayment({
-          ...payment,
-          hash,
-        })
-
-        console.log('payhere.startPayment result:', result)
-
-        if (result === false) {
-          console.error('PayHere popup failed to open (startPayment returned false)')
-          toast.error('Payment popup blocked. Please allow popups and try again.')
-          popup.close()
-          setLoading(false)
-        }
-      } catch (startError) {
-        console.error('payhere.startPayment threw an error:', startError)
-        toast.error('Failed to start payment: ' + ((startError as any)?.message || 'Unknown error'))
-        popup.close()
-        setLoading(false)
-      }
+    popup.focus()
+    setLoading(false)
+    return
     } catch (error) {
       console.error('Upgrade error:', error)
       toast.error('Something went wrong. Please try again.')
@@ -281,24 +140,6 @@ function UpgradePageInner() {
 
   return (
     <>
-      <Script
-        src="https://www.payhere.lk/lib/payhere.js"
-        strategy="afterInteractive"
-        onLoad={() => {
-          console.log('PayHere script loaded')
-          setScriptLoaded(true)
-          try {
-            setPayHereCallbacks()
-          } catch (e) {
-            console.error('Error setting PayHere callbacks after script load', e)
-          }
-        }}
-        onError={() => {
-          console.error('Failed to load PayHere script')
-          toast.error('Failed to load payment system')
-        }}
-      />
-
       <div className="min-h-screen dark:bg-gray-950 bg-white text-gray-900 dark:text-white">
         <div className="max-w-4xl mx-auto px-8 py-16">
 
@@ -427,15 +268,13 @@ function UpgradePageInner() {
 
                   <button
                     onClick={handleUpgrade}
-                    disabled={loading || !scriptLoaded}
+                    disabled={loading}
                     className={`w-full ${signedInWithGoogle ? 'bg-orange-500 hover:bg-orange-400 text-white' : 'bg-pink-500 hover:bg-pink-400 text-white'} font-semibold py-3 rounded-xl transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2`}>
                     {loading ? (
                       <>
                         <span className="w-4 h-4 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
                         Processing...
                       </>
-                    ) : !scriptLoaded ? (
-                      'Loading...'
                     ) : (
                       'Get Pro →'
                     )}
