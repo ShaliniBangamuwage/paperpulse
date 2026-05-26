@@ -1,9 +1,15 @@
 'use client'
+
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 import Link from 'next/link'
 import { Mail, Lock, Eye, EyeOff, FileText, Lightbulb, ArrowRight, Zap } from 'lucide-react'
+
+// ✅ Create once outside the component so the same client instance is reused
+// across renders. Creating it inside the component body causes a new GoTrue
+// client on every render, which can produce race conditions on first click.
+const supabase = createClient()
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -11,21 +17,32 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
-  const supabase = createClient()
 
   async function handleLogin() {
-    if (!email || !password) { toast.error('Please fill in all fields'); return }
+    if (!email || !password) {
+      toast.error('Please fill in all fields')
+      return
+    }
+
     setLoading(true)
+
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+
       if (error) {
         toast.error(error.message)
         setLoading(false)
         return
       }
+
       const { data: profile } = await supabase
-        .from('profiles').select('role').eq('id', data.user?.id).maybeSingle()
+        .from('profiles')
+        .select('role')
+        .eq('id', data.user?.id)
+        .maybeSingle()
+
       toast.success('Welcome back!')
+
       if (profile?.role === 'admin') {
         window.location.href = '/admin'
       } else {
@@ -38,23 +55,35 @@ export default function LoginPage() {
   }
 
   async function handleGoogle() {
-  setGoogleLoading(true)
+    setGoogleLoading(true)
 
- const { error } = await supabase.auth.signInWithOAuth({
-  provider: 'google',
-  options: {
-    redirectTo: `${window.location.origin}/auth/callback`,
-    queryParams: {
-      prompt: 'select_account'
+    // ✅ Use NEXT_PUBLIC_SITE_URL on Vercel so preview deployments get the
+    // correct callback URL. Falls back to window.location.origin for local dev.
+    const siteUrl =
+      process.env.NEXT_PUBLIC_SITE_URL ?? window.location.origin
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${siteUrl}/auth/callback`,
+        queryParams: {
+          // Forces the account picker every time — prevents silent first-click
+          // failures when the browser already has a Google session cached.
+          prompt: 'select_account',
+        },
+      },
+    })
+
+    if (error) {
+      toast.error(error.message)
+      // ✅ Only reset loading on error. On success, signInWithOAuth navigates
+      // the browser away — resetting here would cause a flicker/race condition.
+      setGoogleLoading(false)
     }
-  }
-})
 
-  if (error) {
-    toast.error(error.message)
-    setGoogleLoading(false)
+    // ✅ Do NOT call router.push() or window.location here.
+    // signInWithOAuth handles the redirect itself.
   }
-}
 
   return (
     <div className="min-h-screen bg-gray-950 flex">

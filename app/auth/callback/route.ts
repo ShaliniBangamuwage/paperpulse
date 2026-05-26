@@ -1,5 +1,4 @@
 import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(request: NextRequest) {
@@ -11,22 +10,23 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${origin}/login`)
   }
 
-  // ✅ FIX: await cookies()
-  const cookieStore = await cookies()
+  // Collect cookies set by Supabase during the exchange so we can
+  // attach them explicitly to the redirect response. This avoids
+  // race conditions where the Set-Cookie headers were not applied
+  // to the redirect response on the first OAuth redirect.
+  let cookiesToApply: unknown[] = []
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        getAll() {
-          return cookieStore.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            cookieStore.set(name, value, options)
-          })
-        },
+          getAll() {
+            return request.cookies.getAll()
+          },
+          setAll(items: unknown[]) {
+            cookiesToApply = items
+          },
       },
     }
   )
@@ -53,11 +53,19 @@ export async function GET(request: NextRequest) {
     profile = { role: 'user' }
   }
 
-  await new Promise((r) => setTimeout(r, 50))
+  // Create redirect and attach any cookies Supabase requested.
+  const target = profile.role === 'admin' ? '/admin' : '/dashboard'
+  const response = NextResponse.redirect(`${origin}${target}`)
 
-  if (profile.role === 'admin') {
-    return NextResponse.redirect(`${origin}/admin`)
+  if (cookiesToApply && cookiesToApply.length) {
+    try {
+      cookiesToApply.forEach(({ name, value, options }) =>
+        response.cookies.set(name, value, options)
+      )
+    } catch (e) {
+      console.error('Failed to attach auth cookies to redirect', e)
+    }
   }
 
-  return NextResponse.redirect(`${origin}/dashboard`)
+  return response
 }

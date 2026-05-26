@@ -4,11 +4,13 @@ import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 import { Shield } from 'lucide-react'
 
+// ✅ Moved outside component — prevents new client on every render
+const supabase = createClient()
+
 export default function AdminLoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
-  const supabase = createClient()
 
   async function handleAdminLogin() {
     setLoading(true)
