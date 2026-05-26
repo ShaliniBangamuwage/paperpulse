@@ -1,19 +1,16 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
 import { Loader2 } from 'lucide-react'
 
 export default function PayHereCheckoutClient() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [error, setError] = useState<string | null>(null)
-  const supabase = createClient()
 
   useEffect(() => {
     async function initPayment() {
       try {
-        const merchant_id = searchParams.get('merchant_id')
         const order_id = searchParams.get('order_id')
         const items = searchParams.get('items')
         const amount = searchParams.get('amount')
@@ -29,8 +26,8 @@ export default function PayHereCheckoutClient() {
         const cancel_url = searchParams.get('cancel_url')
         const notify_url = searchParams.get('notify_url')
 
-        if (!merchant_id || !order_id || !amount || !currency || !email) {
-          setError('Missing required payment parameters')
+        if (!order_id || !amount || !currency || !email) {
+          setError('Missing payment parameters')
           return
         }
 
@@ -38,22 +35,24 @@ export default function PayHereCheckoutClient() {
         const hashResponse = await fetch('/api/payhere/hash', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ merchant_id, order_id, amount, currency })
+          body: JSON.stringify({ order_id, amount, currency })
         })
 
         if (!hashResponse.ok) {
+          const errorData = await hashResponse.json()
+          console.error('Hash error:', errorData)
           setError('Failed to initialize payment')
           return
         }
 
-        const { hash } = await hashResponse.json()
+        const { hash, merchant_id } = await hashResponse.json()
 
-        // Submit to PayHere
+        console.log('Submitting to PayHere:', { merchant_id, order_id, amount, currency })
+
+        // Submit to PayHere sandbox
         const form = document.createElement('form')
         form.method = 'POST'
-      form.action = process.env.NEXT_PUBLIC_PAYHERE_SANDBOX === 'true'
-  ? 'https://sandbox.payhere.lk/pay/checkout'
-  : 'https://www.payhere.lk/pay/checkout'
+        form.action = 'https://sandbox.payhere.lk/pay/checkout'
 
         const fields = {
           merchant_id,
@@ -85,7 +84,7 @@ export default function PayHereCheckoutClient() {
         document.body.appendChild(form)
         form.submit()
       } catch (err) {
-        console.error('Payment initialization error:', err)
+        console.error('Payment init error:', err)
         setError('Failed to initialize payment')
       }
     }
