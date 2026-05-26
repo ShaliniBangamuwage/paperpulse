@@ -11,7 +11,8 @@ interface Message {
 }
 
 export default function ChatPage() {
-  const { id } = useParams()
+  const params = useParams()
+const id = params?.id as string
   const [paper, setPaper] = useState<any>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
