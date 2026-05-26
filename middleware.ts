@@ -2,7 +2,11 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function middleware(request: NextRequest) {
-  let supabaseResponse = NextResponse.next()
+  let supabaseResponse = NextResponse.next({
+    request: {
+      headers: request.headers,
+    },
+  })
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -12,10 +16,15 @@ export async function middleware(request: NextRequest) {
         getAll() {
           return request.cookies.getAll()
         },
-
         setAll(cookiesToSet) {
-          supabaseResponse = NextResponse.next()
-
+          cookiesToSet.forEach(({ name, value }) =>
+            request.cookies.set(name, value)
+          )
+          supabaseResponse = NextResponse.next({
+            request: {
+              headers: request.headers,
+            },
+          })
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options)
           )
@@ -24,43 +33,21 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  let user = null
-
-  // SAFE AUTH FETCH
-  try {
-    const {
-      data: { user: authUser },
-    } = await supabase.auth.getUser()
-
-    user = authUser
-  } catch (error) {
-    console.error('Middleware auth error:', error)
-  }
-
   const pathname = request.nextUrl.pathname
 
-  // ADMIN LOGIN PAGE
-  if (pathname === '/admin/login') {
-    if (user) {
-      try {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', user.id)
-          .maybeSingle()
-
-        if (profile?.role === 'admin') {
-          return NextResponse.redirect(
-            new URL('/admin', request.url)
-          )
-        }
-      } catch (error) {
-        console.error('Admin profile error:', error)
-      }
-    }
-
+  // ✅ Skip middleware if code param exists (OAuth callback in progress)
+  if (request.nextUrl.searchParams.has('code')) {
     return supabaseResponse
   }
+
+  // REDIRECT /admin/login TO /login
+  if (pathname === '/admin/login') {
+    return NextResponse.redirect(new URL('/login', request.url))
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
 
   // PROTECTED USER ROUTES
   const protectedRoutes = [
@@ -80,42 +67,26 @@ export async function middleware(request: NextRequest) {
     '/compare',
   ]
 
-  const isProtected = protectedRoutes.some((r) =>
-    pathname.startsWith(r)
-  )
+  const isProtected = protectedRoutes.some((r) => pathname.startsWith(r))
 
   if (isProtected && !user) {
-    return NextResponse.redirect(
-      new URL('/login', request.url)
-    )
+    return NextResponse.redirect(new URL('/login', request.url))
   }
 
   // ADMIN ROUTES
   if (pathname.startsWith('/admin')) {
     if (!user) {
-      return NextResponse.redirect(
-        new URL('/admin/login', request.url)
-      )
+      return NextResponse.redirect(new URL('/login', request.url))
     }
 
-    try {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
-        .maybeSingle()
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .maybeSingle()
 
-      if (profile?.role !== 'admin') {
-        return NextResponse.redirect(
-          new URL('/dashboard', request.url)
-        )
-      }
-    } catch (error) {
-      console.error('Admin verification error:', error)
-
-      return NextResponse.redirect(
-        new URL('/dashboard', request.url)
-      )
+    if (profile?.role !== 'admin') {
+      return NextResponse.redirect(new URL('/dashboard', request.url))
     }
   }
 
@@ -124,6 +95,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|login|signup|forgot-password|auth|admin/login|admin/accept-invite|$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|login|signup|forgot-password|auth|admin/accept-invite|$).*)',
   ],
-} 
+}

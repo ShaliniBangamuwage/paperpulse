@@ -5,14 +5,13 @@ import { NextRequest, NextResponse } from 'next/server'
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url)
   const code = searchParams.get('code')
+  const next = searchParams.get('next') ?? '/'
 
   if (!code) {
     return NextResponse.redirect(`${origin}/login`)
   }
 
   const cookieStore = await cookies()
-
-  let response = NextResponse.redirect(`${origin}/dashboard`)
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -23,19 +22,19 @@ export async function GET(request: NextRequest) {
           return cookieStore.getAll()
         },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            response.cookies.set({
-              name,
-              value,
-              ...options,
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options)
             })
-          })
+          } catch {}
         },
       },
     }
   )
 
   const { data, error } = await supabase.auth.exchangeCodeForSession(code)
+
+  console.log('AUTH RESULT:', { user: data?.user?.email, error: error?.message })
 
   if (error || !data?.user) {
     return NextResponse.redirect(`${origin}/login?error=auth`)
@@ -56,12 +55,9 @@ export async function GET(request: NextRequest) {
   }
 
   const role = profile?.role ?? 'user'
+  const redirectTo = role === 'admin' ? '/admin' : '/dashboard'
 
-  response = NextResponse.redirect(
-    role === 'admin'
-      ? `${origin}/admin`
-      : `${origin}/dashboard`
-  )
-
-  return response
+  // ✅ Use absolute URL with no extra params
+  const finalUrl = new URL(redirectTo, origin)
+  return NextResponse.redirect(finalUrl.toString())
 }
