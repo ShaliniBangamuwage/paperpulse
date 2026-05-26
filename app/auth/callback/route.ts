@@ -1,4 +1,5 @@
-import { createClient } from '@/lib/supabase/server'
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(request: NextRequest) {
@@ -7,7 +8,13 @@ export async function GET(request: NextRequest) {
   const code = searchParams.get('code')
 
   if (code) {
-    const supabase = await createClient()
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies,
+      }
+    )
 
     const {
       data,
@@ -34,16 +41,14 @@ export async function GET(request: NextRequest) {
         profile = { role: 'user' }
       }
 
-      // Redirect user
+      // Ensure SSR cookie write has settled before redirect
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
       if (profile.role === 'admin') {
-        return NextResponse.redirect(
-          `${origin}/admin`
-        )
+        return NextResponse.redirect(`${origin}/admin`)
       }
 
-      return NextResponse.redirect(
-        `${origin}/dashboard`
-      )
+      return NextResponse.redirect(`${origin}/dashboard`)
     }
 
     console.error(error)
