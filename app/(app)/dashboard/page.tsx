@@ -77,7 +77,7 @@ function DashboardContent() {
           'role, is_pro, papers_count'
         )
         .eq('id', user.id)
-        .single()
+        .maybeSingle()
 
       if (profileError) {
         console.error(profileError)

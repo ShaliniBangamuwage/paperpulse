@@ -24,7 +24,7 @@ export default function LoginPage() {
         return
       }
       const { data: profile } = await supabase
-        .from('profiles').select('role').eq('id', data.user?.id).single()
+        .from('profiles').select('role').eq('id', data.user?.id).maybeSingle()
       toast.success('Welcome back!')
       if (profile?.role === 'admin') {
         window.location.href = '/admin'
@@ -38,16 +38,20 @@ export default function LoginPage() {
   }
 
   async function handleGoogle() {
-    setGoogleLoading(true)
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: `${window.location.origin}/auth/callback` }
-    })
-    if (error) {
-      toast.error(error.message)
-      setGoogleLoading(false)
+  setGoogleLoading(true)
+
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      redirectTo: `${window.location.origin}/auth/callback`
     }
+  })
+
+  if (error) {
+    toast.error(error.message)
+    setGoogleLoading(false)
   }
+}
 
   return (
     <div className="min-h-screen bg-gray-950 flex">

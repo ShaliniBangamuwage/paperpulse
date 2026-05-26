@@ -1,4 +1,5 @@
 'use client'
+
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
@@ -20,187 +21,464 @@ export default function PortfolioPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [userId, setUserId] = useState('')
+
   const [form, setForm] = useState({
-    name: '', bio: '', github_url: '', linkedin_url: '', website_url: '', is_public: true
+    name: '',
+    bio: '',
+    github_url: '',
+    linkedin_url: '',
+    website_url: '',
+    is_public: true
   })
+
   const supabase = createClient()
 
-  useEffect(() => { loadAll() }, [])
+  useEffect(() => {
+    loadAll()
+  }, [])
 
   async function loadAll() {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    setUserId(user.id)
+    try {
+      const {
+        data: { user }
+      } = await supabase.auth.getUser()
 
-    const [{ data: p }, { data: proj }, { data: savedIdeas }] = await Promise.all([
-      supabase.from('portfolio').select('*').eq('user_id', user.id).single(),
-      supabase.from('projects').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
-      supabase.from('saved_ideas').select('*, ideas(title, description, difficulty, tech_stack, github_url, demo_url)').eq('user_id', user.id),
-    ])
+      if (!user) {
+        setLoading(false)
+        return
+      }
 
-    if (p) {
-      setPortfolio(p)
-      setForm({ name: p.name, bio: p.bio || '', github_url: p.github_url || '', linkedin_url: p.linkedin_url || '', website_url: p.website_url || '', is_public: p.is_public })
+      setUserId(user.id)
+
+      const [
+        { data: p, error: portfolioError },
+        { data: proj, error: projectsError },
+        { data: savedIdeas, error: ideasError }
+      ] = await Promise.all([
+        supabase
+          .from('portfolio')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single(),
+
+        supabase
+          .from('projects')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false }),
+
+        supabase
+          .from('saved_ideas')
+          .select(`
+            *,
+            ideas(
+              id,
+              title,
+              description,
+              difficulty,
+              tech_stack,
+              github_url,
+              demo_url
+            )
+          `)
+          .eq('user_id', user.id)
+      ])
+
+      if (
+        portfolioError &&
+        portfolioError.code !== 'PGRST116'
+      ) {
+        console.error(portfolioError)
+      }
+
+      if (projectsError) {
+        console.error(projectsError)
+      }
+
+      if (ideasError) {
+        console.error(ideasError)
+      }
+
+      if (p) {
+        setPortfolio(p)
+
+        setForm({
+          name: p.name || '',
+          bio: p.bio || '',
+          github_url: p.github_url || '',
+          linkedin_url: p.linkedin_url || '',
+          website_url: p.website_url || '',
+          is_public: p.is_public ?? true
+        })
+      }
+
+      setProjects(proj || [])
+      setIdeas(savedIdeas || [])
+    } catch (error) {
+      console.error(error)
+      toast.error('Failed to load portfolio')
+    } finally {
+      setLoading(false)
     }
-    setProjects(proj || [])
-    setIdeas(savedIdeas || [])
-    setLoading(false)
   }
 
   async function savePortfolio() {
-    if (!form.name.trim()) { toast.error('Enter your name'); return }
-    setSaving(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-
-    if (portfolio) {
-      const { error } = await supabase.from('portfolio').update(form).eq('id', portfolio.id)
-      if (error) { toast.error('Failed'); setSaving(false); return }
-    } else {
-      const { data, error } = await supabase.from('portfolio').insert({ ...form, user_id: user.id }).select().single()
-      if (error) { toast.error('Failed'); setSaving(false); return }
-      setPortfolio(data)
+    if (!form.name.trim()) {
+      toast.error('Enter your name')
+      return
     }
-    toast.success('Portfolio saved!')
-    setSaving(false)
+
+    setSaving(true)
+
+    try {
+      const {
+        data: { user }
+      } = await supabase.auth.getUser()
+
+      if (!user) {
+        toast.error('Please login first')
+        return
+      }
+
+      if (portfolio) {
+        const { error } = await supabase
+          .from('portfolio')
+          .update(form)
+          .eq('id', portfolio.id)
+
+        if (error) throw error
+      } else {
+        const { data, error } = await supabase
+          .from('portfolio')
+          .insert({
+            ...form,
+            user_id: user.id
+          })
+          .select()
+          .single()
+
+        if (error) throw error
+
+        setPortfolio(data)
+      }
+
+      toast.success('Portfolio saved!')
+    } catch (error) {
+      console.error(error)
+      toast.error('Failed to save portfolio')
+    } finally {
+      setSaving(false)
+    }
   }
 
-  async function updateIdeaLinks(ideaId: string, field: 'github_url' | 'demo_url', value: string) {
-    await supabase.from('ideas').update({ [field]: value }).eq('id', ideaId)
-    setIdeas(prev => prev.map(i => i.ideas?.id === ideaId ? { ...i, ideas: { ...i.ideas, [field]: value } } : i))
+  async function updateIdeaLinks(
+    ideaId: string,
+    field: 'github_url' | 'demo_url',
+    value: string
+  ) {
+    const { error } = await supabase
+      .from('ideas')
+      .update({ [field]: value })
+      .eq('id', ideaId)
+
+    if (error) {
+      toast.error('Failed to update link')
+      return
+    }
+
+    setIdeas(prev =>
+      prev.map(i =>
+        i.ideas?.id === ideaId
+          ? {
+              ...i,
+              ideas: {
+                ...i.ideas,
+                [field]: value
+              }
+            }
+          : i
+      )
+    )
+
+    toast.success('Updated!')
   }
 
-  const portfolioUrl = `${typeof window !== 'undefined' ? window.location.origin : ''}/portfolio/${userId}`
+  const portfolioUrl =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/portfolio/${userId}`
+      : ''
 
-  if (loading) return (
-    <div className="min-h-screen dark:bg-gray-950 bg-white flex items-center justify-center">
-      <div className="animate-spin w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full" />
-    </div>
-  )
+  if (loading) {
+    return (
+      <div className="min-h-screen dark:bg-slate-950 bg-slate-50 flex items-center justify-center">
+        <div className="animate-spin w-10 h-10 border-2 border-orange-500 border-t-transparent rounded-full" />
+      </div>
+    )
+  }
 
   return (
-    <div className="min-h-screen dark:bg-gray-950 bg-white text-gray-900 dark:text-white p-6">
-      <div className="max-w-4xl mx-auto">
-        <div className="mb-8">
-          <h1 className="text-3xl font-semibold mb-2">Portfolio Builder</h1>
-          <p className="dark:text-gray-400 text-gray-500">Build your public portfolio to share with recruiters</p>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-1 space-y-4">
-
-            {/* Profile form */}
-            <div className="dark:bg-gray-900 bg-orange-50 border dark:border-gray-800 border-orange-100 rounded-2xl p-5">
-              <h2 className="font-medium mb-4">Profile</h2>
+    <div className="min-h-screen dark:bg-slate-950 bg-slate-50 text-slate-900 dark:text-slate-100 p-6">
+      <div className="max-w-6xl mx-auto space-y-8">
+        <div className="rounded-[2rem] border border-slate-200/80 bg-white shadow-[0_30px_90px_-30px_rgba(15,23,42,0.35)] dark:border-slate-800/80 dark:bg-slate-950">
+          <div className="grid gap-8 lg:grid-cols-[1.3fr_0.95fr] p-8 lg:p-10">
+            <div className="space-y-6">
               <div className="space-y-3">
-                <input placeholder="Your name *" value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-                  className="w-full dark:bg-gray-800 bg-white border dark:border-gray-700 border-orange-200 dark:text-white text-gray-900 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500" />
-                <textarea placeholder="Short bio" value={form.bio} onChange={e => setForm(p => ({ ...p, bio: e.target.value }))} rows={3}
-                  className="w-full dark:bg-gray-800 bg-white border dark:border-gray-700 border-orange-200 dark:text-white text-gray-900 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 resize-none" />
-                <input placeholder="GitHub URL" value={form.github_url} onChange={e => setForm(p => ({ ...p, github_url: e.target.value }))}
-                  className="w-full dark:bg-gray-800 bg-white border dark:border-gray-700 border-orange-200 dark:text-white text-gray-900 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500" />
-                <input placeholder="LinkedIn URL" value={form.linkedin_url} onChange={e => setForm(p => ({ ...p, linkedin_url: e.target.value }))}
-                  className="w-full dark:bg-gray-800 bg-white border dark:border-gray-700 border-orange-200 dark:text-white text-gray-900 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500" />
-                <input placeholder="Website URL" value={form.website_url} onChange={e => setForm(p => ({ ...p, website_url: e.target.value }))}
-                  className="w-full dark:bg-gray-800 bg-white border dark:border-gray-700 border-orange-200 dark:text-white text-gray-900 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500" />
+                <p className="text-sm font-semibold uppercase tracking-[0.28em] text-orange-600 dark:text-orange-300">Portfolio Builder</p>
+                <h1 className="text-4xl font-semibold tracking-tight text-slate-950 dark:text-white sm:text-5xl">
+                  Create a polished portfolio recruiters love.
+                </h1>
+                <p className="max-w-3xl text-base leading-7 text-slate-600 dark:text-slate-400">
+                  Keep your profile, project links, and public portfolio in one polished dashboard.
+                </p>
+              </div>
 
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <div onClick={() => setForm(p => ({ ...p, is_public: !p.is_public }))}
-                    className={`w-10 h-5 rounded-full transition-colors relative ${form.is_public ? 'bg-orange-500' : 'dark:bg-gray-700 bg-gray-300'}`}>
-                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${form.is_public ? 'translate-x-5' : 'translate-x-0.5'}`} />
+              <div className="rounded-[1.75rem] border border-slate-200/80 bg-slate-50 p-7 shadow-sm dark:border-slate-800/80 dark:bg-slate-900">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Portfolio snapshot</p>
+                    <p className="mt-2 text-3xl font-semibold text-slate-950 dark:text-white">
+                      {portfolio?.name || 'Your portfolio preview'}
+                    </p>
                   </div>
-                  <span className="text-sm dark:text-gray-300 text-gray-700">Public portfolio</span>
-                </label>
+                  <span className="inline-flex items-center rounded-full bg-orange-500/10 px-4 py-2 text-sm font-semibold text-orange-700 dark:bg-orange-500/15 dark:text-orange-200">
+                    {form.is_public ? 'Public' : 'Private'} profile
+                  </span>
+                </div>
 
-                <button onClick={savePortfolio} disabled={saving}
-                  className="w-full bg-orange-500 hover:bg-orange-400 text-white py-2.5 rounded-xl text-sm font-medium transition-colors disabled:opacity-60">
-                  {saving ? 'Saving...' : 'Save portfolio'}
-                </button>
+                <div className="mt-6 grid gap-4 sm:grid-cols-3">
+                  <div className="rounded-3xl border border-slate-200 bg-white p-4 text-center dark:border-slate-800 dark:bg-slate-950">
+                    <p className="text-xs uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500">Projects</p>
+                    <p className="mt-3 text-2xl font-semibold text-slate-950 dark:text-white">{projects.length}</p>
+                  </div>
+
+                  <div className="rounded-3xl border border-slate-200 bg-white p-4 text-center dark:border-slate-800 dark:bg-slate-950">
+                    <p className="text-xs uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500">Saved ideas</p>
+                    <p className="mt-3 text-2xl font-semibold text-slate-950 dark:text-white">{ideas.length}</p>
+                  </div>
+
+                  <div className="rounded-3xl border border-slate-200 bg-white p-4 text-center dark:border-slate-800 dark:bg-slate-950">
+                    <p className="text-xs uppercase tracking-[0.3em] text-slate-400 dark:text-slate-500">Portfolio status</p>
+                    <p className="mt-3 text-2xl font-semibold text-slate-950 dark:text-white">
+                      {portfolio && form.is_public ? 'Ready' : 'Draft'}
+                    </p>
+                  </div>
+                </div>
+
+                {portfolio?.bio && (
+                  <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white">Bio preview</p>
+                    <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-400">
+                      {portfolio.bio}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-[1.75rem] border border-slate-200/80 bg-orange-50 p-6 dark:border-slate-800/80 dark:bg-slate-900">
+                <h2 className="text-lg font-semibold text-slate-950 dark:text-white">Quick profile tips</h2>
+
+                <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-600 dark:text-slate-400">
+                  <li>• Keep your bio concise and outcome-focused.</li>
+                  <li>• Add GitHub, LinkedIn, and website links for easy access.</li>
+                  <li>• Publish your portfolio when it’s ready to share.</li>
+                </ul>
               </div>
             </div>
 
-            {/* Share link */}
+            <div className="space-y-6">
+              <div className="rounded-[1.75rem] border border-orange-100 bg-orange-50 p-6 dark:border-orange-500/20 dark:bg-orange-500/5">
+                <h2 className="font-semibold text-slate-950 dark:text-white">Update your details</h2>
+
+                <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-400">
+                  Keep your portfolio content fresh by updating your profile and links here.
+                </p>
+
+                <div className="mt-5 space-y-3">
+                  <input
+                    placeholder="Your name *"
+                    value={form.name}
+                    onChange={(e) =>
+                      setForm(p => ({
+                        ...p,
+                        name: e.target.value
+                      }))
+                    }
+                    className="w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-200 dark:border-slate-800 dark:bg-slate-950 dark:text-white dark:focus:border-orange-400 dark:focus:ring-orange-500/20"
+                  />
+
+                  <textarea
+                    placeholder="Short bio"
+                    value={form.bio}
+                    onChange={(e) =>
+                      setForm(p => ({
+                        ...p,
+                        bio: e.target.value
+                      }))
+                    }
+                    rows={4}
+                    className="w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-200 dark:border-slate-800 dark:bg-slate-950 dark:text-white dark:focus:border-orange-400 dark:focus:ring-orange-500/20 resize-none"
+                  />
+
+                  <input
+                    placeholder="GitHub URL"
+                    value={form.github_url}
+                    onChange={(e) =>
+                      setForm(p => ({
+                        ...p,
+                        github_url: e.target.value
+                      }))
+                    }
+                    className="w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-200 dark:border-slate-800 dark:bg-slate-950 dark:text-white dark:focus:border-orange-400 dark:focus:ring-orange-500/20"
+                  />
+
+                  <input
+                    placeholder="LinkedIn URL"
+                    value={form.linkedin_url}
+                    onChange={(e) =>
+                      setForm(p => ({
+                        ...p,
+                        linkedin_url: e.target.value
+                      }))
+                    }
+                    className="w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-200 dark:border-slate-800 dark:bg-slate-950 dark:text-white dark:focus:border-orange-400 dark:focus:ring-orange-500/20"
+                  />
+
+                  <input
+                    placeholder="Website URL"
+                    value={form.website_url}
+                    onChange={(e) =>
+                      setForm(p => ({
+                        ...p,
+                        website_url: e.target.value
+                      }))
+                    }
+                    className="w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-200 dark:border-slate-800 dark:bg-slate-950 dark:text-white dark:focus:border-orange-400 dark:focus:ring-orange-500/20"
+                  />
+
+                  <label className="flex items-center gap-3 rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm dark:border-slate-800 dark:bg-slate-950">
+                    <input
+                      type="checkbox"
+                      checked={form.is_public}
+                      onChange={() =>
+                        setForm(p => ({
+                          ...p,
+                          is_public: !p.is_public
+                        }))
+                      }
+                      className="h-4 w-4 rounded border-slate-300 text-orange-500 focus:ring-orange-500"
+                    />
+
+                    <span className="text-slate-700 dark:text-slate-200">
+                      Make my portfolio public
+                    </span>
+                  </label>
+
+                  <button
+                    onClick={savePortfolio}
+                    disabled={saving}
+                    className="w-full rounded-3xl bg-orange-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {saving ? 'Saving...' : 'Save portfolio'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <aside className="space-y-6">
+            <div className="rounded-[1.75rem] border border-slate-200/80 bg-slate-50 p-6 shadow-sm dark:border-slate-800/80 dark:bg-slate-900">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">
+                    Live preview
+                  </p>
+
+                  <p className="mt-2 text-xl font-semibold text-slate-950 dark:text-white">
+                    Your portfolio card
+                  </p>
+                </div>
+
+                <div className="rounded-full bg-orange-100 px-3 py-1 text-sm text-orange-700 dark:bg-orange-500/15 dark:text-orange-200">
+                  Preview mode
+                </div>
+              </div>
+
+              <div className="mt-6 space-y-4">
+                <div className="rounded-3xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">Name</p>
+
+                  <p className="mt-2 text-lg font-semibold text-slate-950 dark:text-white">
+                    {form.name || 'Your name here'}
+                  </p>
+                </div>
+
+                <div className="rounded-3xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">Bio</p>
+
+                  <p className="mt-2 text-sm leading-6 text-slate-700 dark:text-slate-300">
+                    {form.bio || 'A brief introduction will help employers quickly understand your background and goals.'}
+                  </p>
+                </div>
+
+                <div className="rounded-3xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
+                  <p className="text-sm text-slate-500 dark:text-slate-400">Links</p>
+
+                  <div className="mt-3 space-y-2 text-sm">
+                    <p className="text-slate-900 dark:text-white">
+                      GitHub: {form.github_url || '—'}
+                    </p>
+
+                    <p className="text-slate-900 dark:text-white">
+                      LinkedIn: {form.linkedin_url || '—'}
+                    </p>
+
+                    <p className="text-slate-900 dark:text-white">
+                      Website: {form.website_url || '—'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {portfolio && form.is_public && (
-              <div className="dark:bg-gray-900 bg-orange-50 border dark:border-gray-800 border-orange-100 rounded-2xl p-5">
-                <h2 className="font-medium mb-3">Share link</h2>
-                <p className="text-xs dark:text-gray-400 text-gray-500 mb-3 break-all">{portfolioUrl}</p>
-                <div className="flex gap-2">
-                  <button onClick={() => { navigator.clipboard.writeText(portfolioUrl); toast.success('Copied!') }}
-                    className="flex-1 bg-orange-500/20 text-orange-500 py-2 rounded-xl text-xs font-medium hover:bg-orange-500/30 transition-colors">
+              <div className="rounded-[1.75rem] border border-slate-200/80 bg-slate-50 p-6 shadow-sm dark:border-slate-800/80 dark:bg-slate-900">
+                <h2 className="text-lg font-semibold text-slate-950 dark:text-white">
+                  Share your portfolio
+                </h2>
+
+                <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-400">
+                  Copy the link below to share your public portfolio with recruiters.
+                </p>
+
+                <div className="mt-5 rounded-3xl bg-white p-4 text-sm text-slate-700 shadow-sm dark:bg-slate-950 dark:text-slate-200 break-words">
+                  {portfolioUrl}
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(portfolioUrl)
+                      toast.success('Copied!')
+                    }}
+                    className="rounded-3xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-orange-600"
+                  >
                     Copy link
                   </button>
-                  <a href={portfolioUrl} target="_blank" rel="noreferrer"
-                    className="flex-1 text-center dark:bg-gray-800 bg-white border dark:border-gray-700 border-orange-200 dark:text-gray-300 text-gray-600 py-2 rounded-xl text-xs hover:border-orange-500 transition-colors">
+
+                  <a
+                    href={portfolioUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center justify-center rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-900 transition hover:border-orange-500 dark:border-slate-800 dark:bg-slate-950 dark:text-white"
+                  >
                     Preview
                   </a>
                 </div>
               </div>
             )}
-          </div>
-
-          <div className="lg:col-span-2 space-y-6">
-
-            {/* Projects */}
-            <div className="dark:bg-gray-900 bg-orange-50 border dark:border-gray-800 border-orange-100 rounded-2xl p-5">
-              <h2 className="font-medium mb-4">Projects ({projects.length})</h2>
-              {projects.length === 0 ? (
-                <p className="text-sm dark:text-gray-500 text-gray-400">No projects yet. Create some in the Tracker.</p>
-              ) : (
-                <div className="space-y-3">
-                  {projects.map(p => (
-                    <div key={p.id} className="dark:bg-gray-800 bg-white border dark:border-gray-700 border-orange-100 rounded-xl p-4">
-                      <div className="flex items-start justify-between mb-2">
-                        <p className="font-medium dark:text-white text-gray-900 text-sm">{p.title}</p>
-                        <span className={`text-xs px-2 py-0.5 rounded-full ml-2 ${p.status === 'completed' ? 'bg-green-500/20 text-green-400' : p.status === 'in-progress' ? 'bg-blue-500/20 text-blue-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
-                          {p.status}
-                        </span>
-                      </div>
-                      {p.description && <p className="text-xs dark:text-gray-400 text-gray-500 mb-2">{p.description}</p>}
-                      <div className="flex flex-wrap gap-1 mb-2">
-                        {p.tech_stack?.map((t: string) => (
-                          <span key={t} className="text-xs bg-orange-500/20 text-orange-500 px-2 py-0.5 rounded-full">{t}</span>
-                        ))}
-                      </div>
-                      <div className="flex gap-2">
-                        {p.github_url && <a href={p.github_url} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline">GitHub</a>}
-                        {p.demo_url && <a href={p.demo_url} target="_blank" rel="noreferrer" className="text-xs text-orange-500 hover:underline">Demo</a>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Saved ideas with GitHub links */}
-            <div className="dark:bg-gray-900 bg-orange-50 border dark:border-gray-800 border-orange-100 rounded-2xl p-5">
-              <h2 className="font-medium mb-2">Saved Ideas</h2>
-              <p className="text-xs dark:text-gray-500 text-gray-400 mb-4">Add GitHub/demo links to your saved ideas</p>
-              {ideas.length === 0 ? (
-                <p className="text-sm dark:text-gray-500 text-gray-400">No saved ideas yet.</p>
-              ) : (
-                <div className="space-y-4">
-                  {ideas.map(item => (
-                    <div key={item.id} className="dark:bg-gray-800 bg-white border dark:border-gray-700 border-orange-100 rounded-xl p-4">
-                      <p className="font-medium dark:text-white text-gray-900 text-sm mb-1">{item.ideas?.title}</p>
-                      <div className="flex flex-wrap gap-1 mb-3">
-                        {item.ideas?.tech_stack?.map((t: string) => (
-                          <span key={t} className="text-xs bg-orange-500/20 text-orange-500 px-2 py-0.5 rounded-full">{t}</span>
-                        ))}
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <input placeholder="GitHub URL" defaultValue={item.ideas?.github_url || ''}
-                          onBlur={e => updateIdeaLinks(item.ideas?.id, 'github_url', e.target.value)}
-                          className="dark:bg-gray-700 bg-orange-50 border dark:border-gray-600 border-orange-200 dark:text-white text-gray-900 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-orange-500" />
-                        <input placeholder="Demo URL" defaultValue={item.ideas?.demo_url || ''}
-                          onBlur={e => updateIdeaLinks(item.ideas?.id, 'demo_url', e.target.value)}
-                          className="dark:bg-gray-700 bg-orange-50 border dark:border-gray-600 border-orange-200 dark:text-white text-gray-900 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-orange-500" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+          </aside>
         </div>
       </div>
     </div>

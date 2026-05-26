@@ -1,17 +1,18 @@
 'use client'
-import { useState, useMemo } from 'react'
+
+import { useState, useMemo, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import {
-  LayoutDashboard, Users, FileText, Lightbulb, CreditCard,
+  LayoutDashboard, Users, FileText, Lightbulb,
   Library, Megaphone, Flag, Home, LogOut, ChevronLeft, ChevronRight,
   Zap, Ban, CheckCircle, AlertTriangle, Info, XCircle, X,
-  Globe, Bookmark, BarChart2
+  Globe, Bookmark
 } from 'lucide-react'
 
-type Tab = 'overview' | 'papers' | 'users' | 'ideas' | 'payments' | 'library' | 'announcements' | 'flagged'
+type Tab = 'overview' | 'papers' | 'users' | 'ideas' | 'pro_requests' | 'library' | 'announcements' | 'flagged'
 
 const statusColor: Record<string, string> = {
   pending: 'bg-yellow-500/20 text-yellow-400',
@@ -45,6 +46,7 @@ interface Props {
   announcements: any[]
   flaggedPapers: any[]
   flaggedIdeas: any[]
+  proRequests: any[]
 }
 
 const AnnouncementIcon = ({ type }: { type: string }) => {
@@ -54,7 +56,6 @@ const AnnouncementIcon = ({ type }: { type: string }) => {
   return <Info size={14} />
 }
 
-// ── InviteAdminButton — defined OUTSIDE main component ──
 function InviteAdminButton() {
   const [showModal, setShowModal] = useState(false)
   const [email, setEmail] = useState('')
@@ -119,12 +120,10 @@ function InviteAdminButton() {
   )
 }
 
-
-
 export default function AdminDashboardClient({
   currentUser, stats, papers, users, recentIdeas,
   payments, announcements: initialAnnouncements,
-  flaggedPapers, flaggedIdeas,
+  flaggedPapers, flaggedIdeas, proRequests: initialProRequests,
 }: Props) {
   const [tab, setTab] = useState<Tab>('overview')
   const [search, setSearch] = useState('')
@@ -137,9 +136,129 @@ export default function AdminDashboardClient({
   const [localPapers, setLocalPapers] = useState(papers)
   const [localIdeas, setLocalIdeas] = useState(recentIdeas)
   const [confirmBan, setConfirmBan] = useState<string | null>(null)
+  const [proRequests, setProRequests] = useState(initialProRequests)
+  const [verifyingIds, setVerifyingIds] = useState<string[]>([])
+  const [signedUrls, setSignedUrls] = useState<Record<string, { front: string; back: string }>>({})
 
   const router = useRouter()
   const supabase = createClient()
+
+  useEffect(() => {
+    async function loadSignedUrls() {
+      const urls: Record<string, { front: string; back: string }> = {}
+      const storagePaths: string[] = []
+      const pathMap: Record<string, { requestId: string; side: 'front' | 'back' }> = {}
+
+      proRequests.forEach((req: any) => {
+        const frontPath = req.id_front_url
+        const backPath = req.id_back_url
+
+        if (!frontPath || !backPath) return
+
+        if ((frontPath as string).startsWith('http')) {
+          urls[req.id] = { front: frontPath, back: backPath }
+        } else {
+          storagePaths.push(frontPath)
+          storagePaths.push(backPath)
+          pathMap[frontPath] = { requestId: req.id, side: 'front' }
+          pathMap[backPath] = { requestId: req.id, side: 'back' }
+        }
+      })
+
+      if (storagePaths.length > 0) {
+        const res = await fetch('/api/signed-url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ paths: storagePaths }),
+        })
+
+        const data = await res.json()
+        if (!res.ok) {
+          console.error('Failed to load signed URLs', data)
+          return
+        }
+
+        Object.entries(data.urls || {}).forEach(([path, signedUrl]) => {
+          const mapping = pathMap[path]
+          if (!mapping) return
+          const existing = urls[mapping.requestId] || { front: '', back: '' }
+          urls[mapping.requestId] = {
+            ...existing,
+            [mapping.side]: String(signedUrl),
+          }
+        })
+      }
+
+      setSignedUrls(urls)
+    }
+
+    if (proRequests.length > 0) {
+      loadSignedUrls()
+    }
+  }, [proRequests])
+
+  async function approveProRequest(requestId: string, userId: string) {
+    const { error } = await supabase.from('pro_requests')
+      .update({ status: 'approved', reviewed_at: new Date().toISOString() })
+      .eq('id', requestId)
+    if (error) { toast.error('Failed'); return }
+
+    await supabase.from('profiles')
+      .update({ is_pro: true, pro_since: new Date().toISOString() })
+      .eq('id', userId)
+
+    setProRequests((prev: any[]) => prev.map(r => r.id === requestId ? { ...r, status: 'approved' } : r))
+    toast.success('Pro access granted!')
+  }
+
+  async function rejectProRequest(requestId: string) {
+    const { error } = await supabase.from('pro_requests')
+      .update({ status: 'rejected', reviewed_at: new Date().toISOString() })
+      .eq('id', requestId)
+    if (error) { toast.error('Failed'); return }
+    setProRequests((prev: any[]) => prev.map(r => r.id === requestId ? { ...r, status: 'rejected' } : r))
+    toast.success('Request rejected')
+  }
+
+  async function verifyProRequest(request: any) {
+    if (!request.id_front_url && !request.id_back_url) {
+      toast.error('No ID images available for verification')
+      return
+    }
+
+    setVerifyingIds(prev => [...prev, request.id])
+    try {
+      const res = await fetch('/api/verify-student-id', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestId: request.id,
+          idFrontUrl: request.id_front_url,
+          idBackUrl: request.id_back_url,
+          universityName: request.university_name,
+          universityEmail: request.university_email,
+        })
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Verification failed')
+
+      const updated = {
+        ...request,
+        status: data.status,
+        ai_verified: data.status === 'approved',
+        ai_confidence: data.analysis?.confidence || 'low',
+        ai_analysis: JSON.stringify(data.analysis || {}),
+      }
+      setProRequests((prev: any[]) => prev.map(r => r.id === request.id ? updated : r))
+      toast.success(data.status === 'approved'
+        ? 'AI has approved this request automatically.'
+        : 'AI analysis completed. Please review the request before final approval.')
+    } catch (err: any) {
+      toast.error(err.message)
+    } finally {
+      setVerifyingIds(prev => prev.filter(id => id !== request.id))
+    }
+  }
 
   async function toggleProStatus(userId: string, current: boolean) {
     const { error } = await supabase.from('profiles').update({
@@ -243,11 +362,6 @@ export default function AdminDashboardClient({
     u.email?.toLowerCase().includes(search.toLowerCase())
   ), [localUsers, search])
 
-  const filteredPayments = useMemo(() => payments.filter((p: any) =>
-    p.email?.toLowerCase().includes(search.toLowerCase())
-  ), [payments, search])
-
-  const totalRevenue = payments.reduce((sum: number, p: any) => sum + (p.amount || 0), 0)
   const publicPapers = useMemo(() => localPapers.filter(p => p.is_public), [localPapers])
 
   const navItems: { id: Tab; label: string; icon: React.ReactNode; count?: number; alert?: boolean }[] = [
@@ -255,7 +369,7 @@ export default function AdminDashboardClient({
     { id: 'users', label: 'Users', icon: <Users size={16} />, count: localUsers.length },
     { id: 'papers', label: 'Papers', icon: <FileText size={16} />, count: localPapers.length },
     { id: 'ideas', label: 'Ideas', icon: <Lightbulb size={16} />, count: localIdeas.length },
-    { id: 'payments', label: 'Payments', icon: <CreditCard size={16} />, count: payments.length },
+    { id: 'pro_requests', label: 'Pro Requests', icon: <Zap size={16} />, count: proRequests.filter((r: any) => r.status === 'pending').length, alert: proRequests.filter((r: any) => r.status === 'pending').length > 0 },
     { id: 'library', label: 'Library', icon: <Library size={16} />, count: publicPapers.length },
     { id: 'announcements', label: 'Announcements', icon: <Megaphone size={16} />, count: announcements.length },
     { id: 'flagged', label: 'Flagged', icon: <Flag size={16} />, count: flaggedPapers.length + flaggedIdeas.length, alert: (flaggedPapers.length + flaggedIdeas.length) > 0 },
@@ -264,7 +378,7 @@ export default function AdminDashboardClient({
   const currentNavItem = navItems.find(n => n.id === tab)
 
   return (
-    <div className="min-h-screen dark:bg-gray-950 bg-white flex">
+    <div className="min-h-screen h-screen overflow-hidden dark:bg-gray-950 bg-white flex">
 
       {/* SIDEBAR */}
       <div className={`${sidebarOpen ? 'w-60' : 'w-16'} transition-all duration-300 dark:bg-gray-900 bg-orange-50 border-r dark:border-gray-800 border-orange-100 flex flex-col shrink-0`}>
@@ -316,7 +430,7 @@ export default function AdminDashboardClient({
       </div>
 
       {/* MAIN */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="border-b dark:border-gray-800 border-orange-100 px-8 py-4 flex items-center justify-between dark:bg-gray-950 bg-white sticky top-0 z-10">
           <h1 className="text-lg font-semibold dark:text-white text-gray-900 flex items-center gap-2">
             {currentNavItem?.icon}
@@ -328,30 +442,29 @@ export default function AdminDashboardClient({
         <div className="p-8">
 
           {/* ── OVERVIEW ── */}
-          {tab === 'overview' && ( <>
-            <div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-                {[
-                  { label: 'Total Users', value: stats.userCount, icon: <Users size={18} />, color: 'text-orange-500' },
-                  { label: 'Pro Users', value: stats.proCount, icon: <Zap size={18} />, color: 'text-yellow-400' },
-                  { label: 'Papers', value: stats.paperCount, icon: <FileText size={18} />, color: 'text-blue-400' },
-                  { label: 'Ideas Generated', value: stats.ideaCount, icon: <Lightbulb size={18} />, color: 'text-violet-400' },
-                  { label: 'Saved Ideas', value: stats.savedCount, icon: <Bookmark size={18} />, color: 'text-amber-400' },
-                  { label: 'Public Papers', value: stats.publicCount, icon: <Globe size={18} />, color: 'text-green-400' },
-                  { label: 'Total Revenue', value: `$${totalRevenue.toFixed(2)}`, icon: <BarChart2 size={18} />, color: 'text-green-500' },
-                  { label: 'Flagged', value: stats.flaggedCount, icon: <Flag size={18} />, color: stats.flaggedCount > 0 ? 'text-red-400' : 'text-gray-400' },
-                ].map(stat => (
-                  <div key={stat.label} className="dark:bg-gray-900 bg-orange-50 border dark:border-gray-800 border-orange-100 rounded-2xl p-5">
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="text-xs dark:text-gray-400 text-gray-500">{stat.label}</span>
-                      <span className={stat.color}>{stat.icon}</span>
+          {tab === 'overview' && (
+            <>
+              <div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                  {[
+                    { label: 'Total Users', value: stats.userCount, icon: <Users size={18} />, color: 'text-orange-500' },
+                    { label: 'Pro Users', value: stats.proCount, icon: <Zap size={18} />, color: 'text-yellow-400' },
+                    { label: 'Papers', value: stats.paperCount, icon: <FileText size={18} />, color: 'text-blue-400' },
+                    { label: 'Ideas Generated', value: stats.ideaCount, icon: <Lightbulb size={18} />, color: 'text-violet-400' },
+                    { label: 'Saved Ideas', value: stats.savedCount, icon: <Bookmark size={18} />, color: 'text-amber-400' },
+                    { label: 'Public Papers', value: stats.publicCount, icon: <Globe size={18} />, color: 'text-green-400' },
+                    { label: 'Flagged', value: stats.flaggedCount, icon: <Flag size={18} />, color: stats.flaggedCount > 0 ? 'text-red-400' : 'text-gray-400' },
+                  ].map(stat => (
+                    <div key={stat.label} className="dark:bg-gray-900 bg-orange-50 border dark:border-gray-800 border-orange-100 rounded-2xl p-5">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs dark:text-gray-400 text-gray-500">{stat.label}</span>
+                        <span className={stat.color}>{stat.icon}</span>
+                      </div>
+                      <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
                     </div>
-                    <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="dark:bg-gray-900 bg-orange-50 border dark:border-gray-800 border-orange-100 rounded-2xl p-5">
                   <h3 className="font-medium dark:text-white text-gray-900 mb-4">Recent Users</h3>
                   <div className="space-y-3">
@@ -369,31 +482,9 @@ export default function AdminDashboardClient({
                     ))}
                   </div>
                 </div>
-
-                <div className="dark:bg-gray-900 bg-orange-50 border dark:border-gray-800 border-orange-100 rounded-2xl p-5">
-                  <h3 className="font-medium dark:text-white text-gray-900 mb-4">Recent Payments</h3>
-                  {payments.length === 0 ? (
-                    <p className="text-sm dark:text-gray-500 text-gray-400">No payments yet</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {payments.slice(0, 5).map((p: any) => (
-                        <div key={p.id} className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm dark:text-white text-gray-900">{p.email}</p>
-                            <p className="text-xs dark:text-gray-500 text-gray-400">{new Date(p.created_at).toLocaleDateString()}</p>
-                          </div>
-                          <span className="text-green-400 font-medium text-sm">${p.amount}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
               </div>
-            </div>
-            <div className="mt-6">
-              <PaymentsAnalysis payments={payments} />
-            </div>
-          </> )}
+            </>
+          )}
 
           {/* ── USERS ── */}
           {tab === 'users' && (
@@ -563,52 +654,136 @@ export default function AdminDashboardClient({
             </div>
           )}
 
-          {/* ── PAYMENTS ── */}
-          {tab === 'payments' && (
-            <div>
-              <div className="grid grid-cols-3 gap-4 mb-6">
-                {[
-                  { label: 'Total Revenue', value: `$${totalRevenue.toFixed(2)}`, color: 'text-green-500' },
-                  { label: 'Total Payments', value: payments.length, color: 'text-blue-400' },
-                  { label: 'Pro Users', value: stats.proCount, color: 'text-orange-500' },
-                ].map(s => (
-                  <div key={s.label} className="dark:bg-gray-900 bg-orange-50 border dark:border-gray-800 border-orange-100 rounded-2xl p-5">
-                    <p className="text-xs dark:text-gray-400 text-gray-500 mb-2">{s.label}</p>
-                    <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
-                  </div>
+          {/* ── PRO REQUESTS ── */}
+          {tab === 'pro_requests' && (
+            <div className="space-y-4">
+              <div className="flex gap-3 mb-6">
+                {['all', 'pending', 'approved', 'rejected'].map(s => (
+                  <button key={s}
+                    onClick={() => setSearch(s === 'all' ? '' : s)}
+                    className={`text-xs px-4 py-2 rounded-xl capitalize transition-colors ${
+                      (s === 'all' && !search) || search === s
+                        ? 'bg-orange-500 text-white'
+                        : 'dark:bg-gray-800 bg-gray-100 dark:text-gray-400 text-gray-500'
+                    }`}>
+                    {s} ({s === 'all' ? proRequests.length : proRequests.filter((r: any) => r.status === s).length})
+                  </button>
                 ))}
               </div>
-              <div className="flex items-center gap-4 mb-6">
-                <input type="text" placeholder="Search payments..." value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  className="flex-1 dark:bg-gray-900 bg-orange-50 border dark:border-gray-700 border-orange-200 dark:text-white text-gray-900 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500" />
-              </div>
-              <div className="dark:bg-gray-900 bg-orange-50 border dark:border-gray-800 border-orange-100 rounded-2xl overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b dark:border-gray-800 border-orange-100">
-                      {['Email', 'Plan', 'Amount', 'Status', 'Date'].map(h => (
-                        <th key={h} className="text-left dark:text-gray-400 text-gray-500 font-medium px-5 py-3 text-xs uppercase tracking-wide">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredPayments.length === 0 ? (
-                      <tr><td colSpan={5} className="px-5 py-10 text-center dark:text-gray-500 text-gray-400">No payments yet</td></tr>
-                    ) : filteredPayments.map((p: any) => (
-                      <tr key={p.id} className="border-b dark:border-gray-800/50 border-orange-50 dark:hover:bg-gray-800/30 hover:bg-orange-100/50 transition-colors">
-                        <td className="px-5 py-3 dark:text-white text-gray-900">{p.email}</td>
-                        <td className="px-5 py-3"><span className="bg-orange-500/20 text-orange-400 text-xs px-2.5 py-1 rounded-full">{p.plan}</span></td>
-                        <td className="px-5 py-3 text-green-400 font-medium">${p.amount}</td>
-                        <td className="px-5 py-3"><span className={`text-xs px-2.5 py-1 rounded-full ${p.status === 'active' ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'}`}>{p.status}</span></td>
-                        <td className="px-5 py-3 dark:text-gray-400 text-gray-500 text-xs">{new Date(p.created_at).toLocaleDateString()}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+
+              {proRequests
+                .filter((r: any) => !search || r.status === search)
+                .map((req: any) => {
+                  let aiData: any = {}
+                  try { aiData = JSON.parse(req.ai_analysis || '{}') } catch {}
+                  return (
+                    <div key={req.id} className="dark:bg-gray-900 bg-gray-50 border dark:border-gray-800 border-gray-200 rounded-2xl p-6">
+                      <div className="flex items-start justify-between gap-4 mb-4">
+                        <div>
+                          <div className="flex items-center gap-2 mb-1">
+                            <p className="font-medium dark:text-white text-gray-900">{req.email}</p>
+                            <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${
+                              req.status === 'approved' ? 'bg-green-500/20 text-green-400' :
+                              req.status === 'rejected' ? 'bg-red-500/20 text-red-400' :
+                              'bg-orange-500/20 text-orange-400'
+                            }`}>{req.status}</span>
+                            {req.ai_verified && <span className="text-xs bg-blue-500/20 text-blue-400 px-2.5 py-1 rounded-full">AI Verified</span>}
+                          </div>
+                          <p className="text-sm dark:text-gray-400 text-gray-500">{req.university_name} — {req.university_email}</p>
+                          <p className="text-xs dark:text-gray-500 text-gray-400 mt-1">{new Date(req.created_at).toLocaleDateString()}</p>
+                        </div>
+                        {req.status === 'pending' && (
+                          <div className="flex flex-wrap gap-2 shrink-0">
+                            <button
+                              onClick={() => verifyProRequest(req)}
+                              disabled={verifyingIds.includes(req.id)}
+                              className="bg-slate-500/20 text-slate-400 hover:bg-slate-500/30 text-xs px-4 py-2 rounded-xl transition-colors font-medium disabled:opacity-50"
+                            >
+                              {verifyingIds.includes(req.id) ? 'Scanning AI review…' : req.ai_analysis ? 'Re-run AI scan' : 'Scan ID with AI'}
+                            </button>
+                            <button onClick={() => approveProRequest(req.id, req.user_id)}
+                              disabled={verifyingIds.includes(req.id)}
+                              className="bg-green-500/20 text-green-400 hover:bg-green-500/30 text-xs px-4 py-2 rounded-xl transition-colors font-medium disabled:opacity-50">
+                              ✓ Approve
+                            </button>
+                            <button onClick={() => rejectProRequest(req.id)}
+                              disabled={verifyingIds.includes(req.id)}
+                              className="bg-red-500/20 text-red-400 hover:bg-red-500/30 text-xs px-4 py-2 rounded-xl transition-colors font-medium disabled:opacity-50">
+                              ✗ Reject
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                          <p className="text-xs dark:text-gray-500 text-gray-400 mb-2">Front of ID</p>
+                          <img src={signedUrls[req.id]?.front || req.id_front_url} alt="ID Front"
+                            className="w-full h-40 object-cover rounded-xl border dark:border-gray-700 border-gray-200" />
+                        </div>
+                        <div>
+                          <p className="text-xs dark:text-gray-500 text-gray-400 mb-2">Back of ID</p>
+                          <img src={signedUrls[req.id]?.back || req.id_back_url} alt="ID Back"
+                            className="w-full h-40 object-cover rounded-xl border dark:border-gray-700 border-gray-200" />
+                        </div>
+                      </div>
+
+                      <div className="dark:bg-gray-900 bg-white border dark:border-gray-700 border-gray-200 rounded-xl p-4 mb-4">
+                        <div className="flex items-center justify-between gap-3 mb-3">
+                          <p className="text-xs font-medium dark:text-gray-400 text-gray-500">AI review summary</p>
+                          <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${
+                            req.ai_verified ? 'bg-blue-500/20 text-blue-400' : req.ai_analysis ? 'bg-yellow-500/20 text-yellow-400' : 'bg-orange-500/20 text-orange-400'
+                          }`}>
+                            {req.ai_verified ? 'Auto-approved by AI' : req.ai_analysis ? 'AI scan available' : 'Awaiting AI scan'}
+                          </span>
+                        </div>
+                        <p className="text-sm dark:text-gray-400 text-gray-500">
+                          This request can be verified with Groq AI against the uploaded ID images. Use the scan action before approving to catch mismatches, expired cards, or low-confidence IDs.
+                        </p>
+                      </div>
+
+                      {req.ai_analysis && (
+                        <div className="dark:bg-gray-800 bg-white border dark:border-gray-700 border-gray-200 rounded-xl p-4">
+                          <p className="text-xs font-medium dark:text-gray-400 text-gray-500 mb-3">AI Analysis</p>
+                          <div className="grid grid-cols-2 gap-3 text-xs">
+                            <div>
+                              <span className="dark:text-gray-500 text-gray-400">Valid ID: </span>
+                              <span className={aiData.is_valid ? 'text-green-400' : 'text-red-400'}>
+                                {aiData.is_valid ? 'Yes' : 'No'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="dark:text-gray-500 text-gray-400">Confidence: </span>
+                              <span className={
+                                aiData.confidence === 'high' ? 'text-green-400' :
+                                aiData.confidence === 'medium' ? 'text-orange-400' : 'text-red-400'
+                              }>{aiData.confidence}</span>
+                            </div>
+                            <div>
+                              <span className="dark:text-gray-500 text-gray-400">Student Name: </span>
+                              <span className="dark:text-white text-gray-900">{aiData.student_name || '—'}</span>
+                            </div>
+                            <div>
+                              <span className="dark:text-gray-500 text-gray-400">University on ID: </span>
+                              <span className="dark:text-white text-gray-900">{aiData.university_on_id || '—'}</span>
+                            </div>
+                          </div>
+                          <p className="mt-3 text-xs dark:text-gray-400 text-gray-500 italic">{aiData.reason}</p>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+
+              {proRequests.filter((r: any) => !search || r.status === search).length === 0 && (
+                <div className="text-center py-20">
+                  <CheckCircle size={36} className="mx-auto mb-3 text-green-400" />
+                  <p className="dark:text-gray-400 text-gray-500">No requests</p>
+                </div>
+              )}
             </div>
           )}
+
 
           {/* ── LIBRARY ── */}
           {tab === 'library' && (
@@ -781,23 +956,21 @@ export default function AdminDashboardClient({
   )
 }
 
-// Simple Payments analysis component (minimal, local-only analysis)
 function PaymentsAnalysis({ payments }: { payments: any[] }) {
   const total = payments.reduce((s: number, p: any) => s + (p.amount || 0), 0)
   const count = payments.length
   const avg = count ? total / count : 0
 
-  // monthly breakdown (YYYY-MM)
   const byMonth: Record<string, number> = {}
   payments.forEach(p => {
     try {
-      const m = new Date(p.created_at).toISOString().slice(0,7)
+      const m = new Date(p.created_at).toISOString().slice(0, 7)
       byMonth[m] = (byMonth[m] || 0) + (p.amount || 0)
     } catch {}
   })
 
   const months = Object.keys(byMonth).sort()
-  const latestMonth = months[months.length-1] || null
+  const latestMonth = months[months.length - 1] || null
   const latestRevenue = latestMonth ? byMonth[latestMonth] : 0
 
   return (
@@ -810,11 +983,11 @@ function PaymentsAnalysis({ payments }: { payments: any[] }) {
         </div>
         <div>
           <p className="text-xs dark:text-gray-400 text-gray-500">Payments</p>
-          <p className="text-2xl font-bold text-gray-900">{count}</p>
+          <p className="text-2xl font-bold dark:text-white text-gray-900">{count}</p>
         </div>
         <div>
           <p className="text-xs dark:text-gray-400 text-gray-500">Average Payment</p>
-          <p className="text-2xl font-bold text-gray-900">${avg.toFixed(2)}</p>
+          <p className="text-2xl font-bold dark:text-white text-gray-900">${avg.toFixed(2)}</p>
         </div>
         <div>
           <p className="text-xs dark:text-gray-400 text-gray-500">Latest Month ({latestMonth || '—'})</p>

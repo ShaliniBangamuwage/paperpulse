@@ -3,21 +3,25 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url)
+
   const code = searchParams.get('code')
 
   if (code) {
     const supabase = await createClient()
 
-    const { data, error } = await supabase.auth.exchangeCodeForSession(code)
+    const {
+      data,
+      error,
+    } = await supabase.auth.exchangeCodeForSession(code)
 
     if (!error && data.user) {
 
-      // Check profile
+      // Check profile safely
       let { data: profile } = await supabase
         .from('profiles')
         .select('role')
         .eq('id', data.user.id)
-        .single()
+        .maybeSingle()
 
       // Create profile if missing
       if (!profile) {
@@ -30,14 +34,22 @@ export async function GET(request: NextRequest) {
         profile = { role: 'user' }
       }
 
-      // Redirect
+      // Redirect user
       if (profile.role === 'admin') {
-        return NextResponse.redirect(`${origin}/admin`)
+        return NextResponse.redirect(
+          `${origin}/admin`
+        )
       }
 
-      return NextResponse.redirect(`${origin}/dashboard`)
+      return NextResponse.redirect(
+        `${origin}/dashboard`
+      )
     }
+
+    console.error(error)
   }
 
-  return NextResponse.redirect(`${origin}/login`)
+  return NextResponse.redirect(
+    `${origin}/login`
+  )
 }

@@ -9,7 +9,11 @@ export default async function AdminPage() {
   if (!user) redirect('/login')
 
   const { data: profile } = await supabase
-    .from('profiles').select('role').eq('id', user.id).single()
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .maybeSingle()
+
   if (!profile || profile.role !== 'admin') redirect('/dashboard')
 
   const admin = createAdminClient()
@@ -28,6 +32,7 @@ export default async function AdminPage() {
     { data: announcements, error: announcementsError },
     { data: flaggedPapers },
     { data: flaggedIdeas },
+    { data: proRequests },
   ] = await Promise.all([
     admin.from('profiles').select('*', { count: 'exact', head: true }),
     admin.from('papers').select('*', { count: 'exact', head: true }),
@@ -42,6 +47,7 @@ export default async function AdminPage() {
     admin.from('announcements').select('*').order('created_at', { ascending: false }),
     admin.from('papers').select('*, profiles(email)').eq('flagged', true),
     admin.from('ideas').select('*, papers(title)').eq('flagged', true),
+    admin.from('pro_requests').select('*').order('created_at', { ascending: false }),
   ])
 
   // Log errors to terminal
@@ -56,7 +62,10 @@ export default async function AdminPage() {
   console.log('Payments count:', payments?.length)
   console.log('Announcements count:', announcements?.length)
 
-  const totalRevenue = (payments || []).reduce((sum: number, p: any) => sum + (p.amount || 0), 0)
+  const totalRevenue = (payments || []).reduce(
+    (sum: number, p: any) => sum + (p.amount || 0),
+    0
+  )
 
   return (
     <AdminDashboardClient
@@ -69,8 +78,10 @@ export default async function AdminPage() {
         publicCount: publicCount || 0,
         proCount: proCount || 0,
         totalRevenue,
-        flaggedCount: (flaggedPapers?.length || 0) + (flaggedIdeas?.length || 0),
+        flaggedCount:
+          (flaggedPapers?.length || 0) + (flaggedIdeas?.length || 0),
       }}
+      proRequests={proRequests || []}
       papers={papers || []}
       users={users || []}
       recentIdeas={recentIdeas || []}

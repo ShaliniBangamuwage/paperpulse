@@ -28,7 +28,7 @@ export default function AdminLoginPage() {
       .from('profiles')
       .select('role')
       .eq('id', userId)
-      .single()
+      .maybeSingle()
     if (profileError || profile?.role !== 'admin') {
       await supabase.auth.signOut()
       toast.error('Access denied. Admin accounts only.')
