@@ -8,18 +8,14 @@ export async function POST(request: NextRequest) {
     const merchant_id = process.env.PAYHERE_MERCHANT_ID
     const merchant_secret = process.env.PAYHERE_MERCHANT_SECRET
 
-    // ✅ Log what Vercel sees
-    console.log('PAYHERE_MERCHANT_ID:', merchant_id)
-    console.log('PAYHERE_MERCHANT_SECRET exists:', !!merchant_secret)
-    console.log('PAYHERE_MERCHANT_SECRET length:', merchant_secret?.length)
-
     if (!merchant_id || !merchant_secret) {
-      console.error('Missing env vars:', { merchant_id: !!merchant_id, merchant_secret: !!merchant_secret })
       return NextResponse.json(
-        { error: 'Missing config', merchant_id: !!merchant_id, secret: !!merchant_secret },
+        { error: 'Missing config' },
         { status: 500 }
       )
     }
+
+    const formattedAmount = Number(amount).toFixed(2)
 
     const hashedSecret = crypto
       .createHash('md5')
@@ -29,14 +25,13 @@ export async function POST(request: NextRequest) {
 
     const hash = crypto
       .createHash('md5')
-      .update(merchant_id + order_id + amount + currency + hashedSecret)
+      .update(merchant_id + order_id + formattedAmount + currency + hashedSecret)
       .digest('hex')
       .toUpperCase()
 
     return NextResponse.json({ hash, merchant_id })
 
   } catch (error: any) {
-    console.error('Hash route error:', error.message)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }

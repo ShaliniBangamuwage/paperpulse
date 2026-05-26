@@ -108,8 +108,8 @@ async function handleUpgrade() {
     }
 
     const orderId = `PP-${user.id}-${Date.now()}`
-    const amount = '9.00'
-    const currency = 'USD'
+    const amount = '900.00'
+    const currency = 'LKR'
 
     const hashRes = await fetch('/api/payhere/hash', {
       method: 'POST',
@@ -126,24 +126,24 @@ async function handleUpgrade() {
 
     const isSandbox = process.env.NEXT_PUBLIC_PAYHERE_SANDBOX === 'true'
 
-    const fields: Record<string, string> = {
-      merchant_id: hashData.merchant_id,
-      return_url: `${window.location.origin}/upgrade?success=true`,
-      cancel_url: `${window.location.origin}/upgrade`,
-      notify_url: `${window.location.origin}/api/payhere/notify`,
-      order_id: orderId,
-      items: 'PaperPulse Pro',
-      amount,
-      currency,
-      hash: hashData.hash,
-      first_name: user.email?.split('@')[0] || 'PaperPulse',
-      last_name: 'User',
-      email: user.email || '',
-      phone: '0771234567',
-      address: 'Colombo',
-      city: 'Colombo',
-      country: 'Sri Lanka',
-    }
+   const fields: Record<string, string> = {
+  merchant_id: hashData.merchant_id,
+  return_url: `${window.location.origin}/upgrade?success=true`,
+  cancel_url: `${window.location.origin}/upgrade`,
+  notify_url: `${window.location.origin}/api/payhere/notify`,
+  order_id: orderId,
+  items: 'PaperPulse Pro',
+  amount: '2500.00',
+  currency: 'LKR',           // ✅ LKR
+  hash: hashData.hash,
+  first_name: user.email?.split('@')[0] || 'PaperPulse',
+  last_name: 'User',
+  email: user.email || '',
+  phone: '0771234567',
+  address: 'Colombo',
+  city: 'Colombo',
+  country: 'Sri Lanka',
+}
 
     // ✅ Form submit — no SDK needed
     const form = document.createElement('form')
@@ -282,7 +282,7 @@ async function handleUpgrade() {
                 </h2>
 
                 <p className="text-3xl font-bold text-white mb-6">
-                  $9
+                  $900
                   <span className="text-base font-normal text-orange-100">
                     /mo
                   </span>
