@@ -8,21 +8,28 @@ export async function GET(request: NextRequest) {
   const code = searchParams.get('code')
 
   if (code) {
+    const cookieStore = cookies()
+
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       {
-        cookies,
+        cookies: {
+          getAll() {
+            return cookieStore.getAll()
+          },
+          setAll(cookiesToSet) {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options)
+            })
+          },
+        },
       }
     )
 
-    const {
-      data,
-      error,
-    } = await supabase.auth.exchangeCodeForSession(code)
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code)
 
     if (!error && data.user) {
-
       // Check profile safely
       let { data: profile } = await supabase
         .from('profiles')
@@ -41,9 +48,6 @@ export async function GET(request: NextRequest) {
         profile = { role: 'user' }
       }
 
-      // Ensure SSR cookie write has settled before redirect
-      await new Promise((resolve) => setTimeout(resolve, 50))
-
       if (profile.role === 'admin') {
         return NextResponse.redirect(`${origin}/admin`)
       }
@@ -54,7 +58,5 @@ export async function GET(request: NextRequest) {
     console.error(error)
   }
 
-  return NextResponse.redirect(
-    `${origin}/login`
-  )
+  return NextResponse.redirect(`${origin}/login`)
 }
