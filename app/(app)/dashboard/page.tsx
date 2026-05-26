@@ -113,46 +113,26 @@ function DashboardContent() {
     }
   }, [fetchPapers, searchParams, supabase])
 
-  async function extractText(
-    file: File
-  ): Promise<string> {
-    const pdfjsLib = await import(
-      'pdfjs-dist'
-    )
+ async function extractText(file: File): Promise<string> {
+  const pdfjsLib = await import('pdfjs-dist')
 
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      new URL(
-        'pdfjs-dist/build/pdf.worker.min.mjs',
-        import.meta.url
-      ).toString()
+  // ✅ Mobile-safe worker src
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`
 
-    const buffer = await file.arrayBuffer()
+  const buffer = await file.arrayBuffer()
 
-    const pdf =
-      await pdfjsLib.getDocument({
-        data: buffer,
-      }).promise
+  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise
 
-    let text = ''
+  let text = ''
 
-    for (
-      let i = 1;
-      i <= Math.min(pdf.numPages, 10);
-      i++
-    ) {
-      const page = await pdf.getPage(i)
-
-      const content =
-        await page.getTextContent()
-
-      text +=
-        content.items
-          .map((item: any) => item.str)
-          .join(' ') + '\n'
-    }
-
-    return text
+  for (let i = 1; i <= Math.min(pdf.numPages, 10); i++) {
+    const page = await pdf.getPage(i)
+    const content = await page.getTextContent()
+    text += content.items.map((item: any) => item.str).join(' ') + '\n'
   }
+
+  return text
+}
 
   async function handleUpload(file: File) {
     if (
