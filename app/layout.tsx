@@ -1,9 +1,6 @@
 import type { Metadata } from 'next'
 import { Geist } from 'next/font/google'
-import Script from 'next/script'
-
 import './globals.css'
-
 import { Toaster } from 'sonner'
 import { ThemeProvider } from '@/components/ThemeProvider'
 
@@ -23,23 +20,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <head>
-        <Script
-          src="https://www.payhere.lk/lib/payhere.js"
-          strategy="beforeInteractive"
-        />
-      </head>
-
       <body
         className={`${geist.className} dark:bg-gray-950 bg-white transition-colors`}
       >
         <ThemeProvider>
           {children}
-
-          <Toaster
-            theme="system"
-            position="top-right"
-          />
+          <Toaster theme="system" position="top-right" />
         </ThemeProvider>
       </body>
     </html>
