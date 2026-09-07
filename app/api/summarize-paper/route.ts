@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
         'Authorization': `Bearer ${process.env.GROQ_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: process.env.GROQ_MODEL!,
         messages: [{
           role: 'user',
           content: `Summarize this research paper in 3-4 sentences for a computer science student. Be clear and concise, focus on what was built and why it matters.

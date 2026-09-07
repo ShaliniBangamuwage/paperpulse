@@ -38,29 +38,23 @@ export default function LoginPage() {
   }
 
   async function handleGoogle() {
-    setGoogleLoading(true)
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-            // let the browser SDK receive tokens and store them in localStorage
-            redirectTo: `${window.location.origin}/dashboard`,
-          queryParams: {
-            prompt: 'select_account',
-          },
-        },
-      })
+  setGoogleLoading(true)
 
-      if (error) {
-        toast.error(error.message)
-        setGoogleLoading(false)
-      }
-      // If successful, page will redirect automatically
-    } catch (err) {
-      toast.error('OAuth failed. Please try again.')
-      setGoogleLoading(false)
+ const { error } = await supabase.auth.signInWithOAuth({
+  provider: 'google',
+  options: {
+    redirectTo: `${window.location.origin}/auth/callback`,
+    queryParams: {
+      prompt: 'select_account'
     }
   }
+})
+
+  if (error) {
+    toast.error(error.message)
+    setGoogleLoading(false)
+  }
+}
 
   return (
     <div className="min-h-screen bg-gray-950 flex">

@@ -73,7 +73,7 @@ Respond in this exact JSON format only, no other text:
     }
 
     const completion = await groq.chat.completions.create({
-      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      model: process.env.GROQ_MODEL!,
       messages: [
         {
           role: 'user',
